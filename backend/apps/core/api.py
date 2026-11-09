@@ -15,7 +15,7 @@ router = Router()
 
 
 @router.get("/healthz", auth=None)
-def healthz(_request: HttpRequest) -> dict[str, str]:
+def healthz(request: HttpRequest) -> dict[str, str]:  # noqa: ARG001
     return {"status": "ok"}
 
 

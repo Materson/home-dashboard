@@ -44,3 +44,6 @@ Thumbs.db
 # plans / scratch
 plans/
 *.local.md
+
+# claude code / editor state
+.claude/

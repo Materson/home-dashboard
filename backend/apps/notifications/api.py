@@ -14,7 +14,7 @@ class VapidOut(Schema):
 
 
 @router.get("/webpush/vapid", response=VapidOut)
-def vapid(_request: HttpRequest) -> VapidOut:
+def vapid(request: HttpRequest) -> VapidOut:  # noqa: ARG001
     return VapidOut(public_key=settings.VAPID_PUBLIC_KEY)
 
 

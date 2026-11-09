@@ -14,9 +14,9 @@ from apps.reminders.api import router as reminders_router
 api = NinjaAPI(
     title="Home Dashboard API",
     version="0.1.0",
-    # cookie-session auth is applied per-router; healthz stays public.
+    # CSRF is enforced by Django's CsrfViewMiddleware; cookie-session auth is
+    # applied per-router. `healthz` stays public.
     docs_url="/docs" if __debug__ else None,
-    csrf=True,
 )
 
 api.add_router("/me", accounts_router, tags=["me"])
