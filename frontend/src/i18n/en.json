@@ -1,0 +1,22 @@
+{
+  "app.title": "Home Dashboard",
+  "nav.overview": "Overview",
+  "nav.finance": "Finance",
+  "nav.cars": "Cars",
+  "nav.health": "Health",
+  "nav.household": "Household",
+  "nav.calendar": "Calendar",
+  "nav.notes": "Notes",
+  "nav.assistant": "Assistant",
+  "nav.settings": "Settings",
+  "auth.email": "Email",
+  "auth.password": "Password",
+  "auth.login": "Log in",
+  "auth.loginFailed": "Login failed",
+  "overview.upcomingReminders": "Upcoming reminders",
+  "overview.calendar": "This week",
+  "overview.stock": "Low or expiring stock",
+  "overview.spend": "This month's spend",
+  "common.loading": "Loading…",
+  "common.noAccess": "You don't have access to this page."
+}

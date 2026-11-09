@@ -1,0 +1,72 @@
+[project]
+name = "home-dashboard-backend"
+version = "0.1.0"
+description = "Home dashboard backend (Django + Ninja)"
+requires-python = ">=3.13"
+dependencies = [
+    "django>=5.2,<5.3",
+    "django-ninja>=1.3",
+    "pydantic>=2.9",
+    "uvicorn[standard]>=0.32",
+    "mysqlclient>=2.2",
+    "redis>=5.1",
+    "celery[redis]>=5.4",
+    "django-celery-beat>=2.7",
+    "django-environ>=0.11",
+    "django-allauth[mfa]>=65.3",
+    "argon2-cffi>=23.1",
+    "cryptography>=43.0",
+    "pywebpush>=2.0",
+    "python-dateutil>=2.9",
+    "dateparser>=1.2",
+    "django-auditlog>=3.0",
+    "google-auth>=2.36",
+    "google-auth-oauthlib>=1.2",
+    "google-api-python-client>=2.154",
+    "slack-bolt>=1.22",
+    "pydantic-ai>=0.0.14",
+    "httpx>=0.28",
+    "python-magic>=0.4.27",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "pytest-asyncio>=0.24",
+    "factory-boy>=3.3",
+    "freezegun>=1.5",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "django-stubs>=5.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["**/migrations/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "DJ", "RUF", "SIM", "PL"]
+ignore = ["PLR0913", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["PLR2004", "S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.dev"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.13"
+plugins = ["mypy_django_plugin.main"]
+strict_optional = true
+warn_unused_ignores = true
+
+[tool.django-stubs]
+django_settings_module = "config.settings.dev"

@@ -1,0 +1,22 @@
+{
+  "app.title": "Panel domowy",
+  "nav.overview": "Przegląd",
+  "nav.finance": "Finanse",
+  "nav.cars": "Samochody",
+  "nav.health": "Zdrowie",
+  "nav.household": "Dom",
+  "nav.calendar": "Kalendarz",
+  "nav.notes": "Notatki",
+  "nav.assistant": "Asystent",
+  "nav.settings": "Ustawienia",
+  "auth.email": "E-mail",
+  "auth.password": "Hasło",
+  "auth.login": "Zaloguj",
+  "auth.loginFailed": "Logowanie nie powiodło się",
+  "overview.upcomingReminders": "Nadchodzące przypomnienia",
+  "overview.calendar": "Ten tydzień",
+  "overview.stock": "Kończące się / przeterminowane",
+  "overview.spend": "Wydatki w tym miesiącu",
+  "common.loading": "Ładowanie…",
+  "common.noAccess": "Brak dostępu do tej strony."
+}

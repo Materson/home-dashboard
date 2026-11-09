@@ -1,0 +1,30 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import { useMe } from "@/features/auth/useMe";
+import { AppShellLayout } from "@/app/AppShell";
+import { LoginPage } from "@/features/auth/LoginPage";
+import { OverviewPage } from "@/features/overview/OverviewPage";
+import { Loading } from "@/components/Loading";
+
+export function App() {
+  const me = useMe();
+
+  if (me.isLoading) return <Loading />;
+  if (!me.data) {
+    return (
+      <Routes>
+        <Route path="/auth/login" element={<LoginPage />} />
+        <Route path="*" element={<Navigate to="/auth/login" replace />} />
+      </Routes>
+    );
+  }
+
+  return (
+    <AppShellLayout>
+      <Routes>
+        <Route path="/" element={<OverviewPage />} />
+        <Route path="/auth/*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppShellLayout>
+  );
+}

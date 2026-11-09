@@ -1,0 +1,46 @@
+# envs / secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# django
+backend/media/
+backend/staticfiles/
+backend/db.sqlite3*
+
+# node / vite
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/stats.html
+frontend/src/api/schema.ts
+
+# docker / local runtime
+data/
+*.log
+
+# os / editors
+.DS_Store
+Thumbs.db
+.vscode/
+!.vscode/extensions.json
+.idea/
+
+# plans / scratch
+plans/
+*.local.md
