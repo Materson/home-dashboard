@@ -3,6 +3,8 @@ import { useMe } from "@/features/auth/useMe";
 import { AppShellLayout } from "@/app/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
 import { OverviewPage } from "@/features/overview/OverviewPage";
+import { FinancePage } from "@/features/finance/FinancePage";
+import { LoansPage } from "@/features/finance/LoansPage";
 import { Loading } from "@/components/Loading";
 
 export function App() {
@@ -22,6 +24,8 @@ export function App() {
     <AppShellLayout>
       <Routes>
         <Route path="/" element={<OverviewPage />} />
+        <Route path="/finance" element={<FinancePage />} />
+        <Route path="/finance/loans" element={<LoansPage />} />
         <Route path="/auth/*" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

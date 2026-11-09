@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.access",
     "apps.reminders",
     "apps.notifications",
+    "apps.finance",
 ]
 
 MIDDLEWARE = [

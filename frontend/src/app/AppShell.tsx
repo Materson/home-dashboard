@@ -6,9 +6,16 @@ import { usePermissions, type ModuleKey } from "@/features/auth/usePermissions";
 
 type NavItem = { to: string; labelKey: string; module: ModuleKey | null };
 
-const NAV: NavItem[] = [
+type NavGroup = NavItem & { children?: NavItem[] };
+
+const NAV: NavGroup[] = [
   { to: "/", labelKey: "nav.overview", module: null },
-  { to: "/finance", labelKey: "nav.finance", module: "finance" },
+  {
+    to: "/finance",
+    labelKey: "nav.finance",
+    module: "finance",
+    children: [{ to: "/finance/loans", labelKey: "nav.loans", module: "finance" }],
+  },
   { to: "/cars", labelKey: "nav.cars", module: "cars" },
   { to: "/health", labelKey: "nav.health", module: "health" },
   { to: "/household", labelKey: "nav.household", module: "household" },
@@ -41,15 +48,30 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="xs">
-        {visible.map((item) => (
-          <NavLink
-            key={item.to}
-            component={Link}
-            to={item.to}
-            label={t(item.labelKey)}
-            active={loc.pathname === item.to || (item.to !== "/" && loc.pathname.startsWith(item.to))}
-          />
-        ))}
+        {visible.map((item) => {
+          const active =
+            loc.pathname === item.to || (item.to !== "/" && loc.pathname.startsWith(item.to));
+          return (
+            <NavLink
+              key={item.to}
+              component={Link}
+              to={item.to}
+              label={t(item.labelKey)}
+              active={active}
+              defaultOpened={active && !!item.children?.length}
+            >
+              {item.children?.map((child) => (
+                <NavLink
+                  key={child.to}
+                  component={Link}
+                  to={child.to}
+                  label={t(child.labelKey)}
+                  active={loc.pathname === child.to}
+                />
+              ))}
+            </NavLink>
+          );
+        })}
       </AppShell.Navbar>
       <AppShell.Main>{children}</AppShell.Main>
     </AppShell>

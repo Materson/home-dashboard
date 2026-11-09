@@ -2,6 +2,7 @@
   "app.title": "Home Dashboard",
   "nav.overview": "Overview",
   "nav.finance": "Finance",
+  "nav.loans": "Loans",
   "nav.cars": "Cars",
   "nav.health": "Health",
   "nav.household": "Household",
