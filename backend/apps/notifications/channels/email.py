@@ -10,11 +10,13 @@ class EmailChannel:
     name = "email"
 
     def send(self, user, reminder: Reminder) -> None:
-        subject = reminder.title
+        # Private reminders (health) keep details off e-mail — subject included.
+        private = reminder.sensitivity == Reminder.Sensitivity.PRIVATE
+        subject = "Przypomnienie" if private else reminder.title
         body = self._body(reminder)
         send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [user.email])
 
     def _body(self, reminder: Reminder) -> str:
         if reminder.sensitivity == Reminder.Sensitivity.PRIVATE:
-            return "You have a reminder — open the dashboard to view it."
+            return "Masz przypomnienie — otwórz panel, aby zobaczyć szczegóły."
         return reminder.body or reminder.title

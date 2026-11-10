@@ -33,6 +33,7 @@ def schedule(
     car_id: str | None = None,
     sensitivity: str = "normal",
     recurrence: str | None = None,  # RFC-5545 RRULE string
+    actions: Sequence[dict] = (),
 ) -> Reminder:
     """Create a Reminder (and its next occurrences if ``recurrence`` is set)."""
     if not any([due_at, due_odometer_km]):
@@ -53,6 +54,7 @@ def schedule(
         car_id=car_id,
         channels=list(channels),
         sensitivity=sensitivity,
+        actions=list(actions),
     )
     reminder.recipients.set(recipients)
 

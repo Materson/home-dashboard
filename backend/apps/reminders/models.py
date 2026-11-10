@@ -1,4 +1,5 @@
 """Reminders — time-based or odometer-based, delivered via one or more channels."""
+
 from __future__ import annotations
 
 from django.conf import settings
@@ -23,7 +24,9 @@ class Reminder(UUIDModel, TimeStamped):
 
     title = models.CharField(max_length=200)
     body = models.TextField(blank=True)
-    sensitivity = models.CharField(max_length=10, choices=Sensitivity.choices, default=Sensitivity.NORMAL)
+    sensitivity = models.CharField(
+        max_length=10, choices=Sensitivity.choices, default=Sensitivity.NORMAL
+    )
 
     # Target: an optional record this reminder is "about" (oil change, appointment, …).
     content_type = models.ForeignKey(ContentType, null=True, blank=True, on_delete=models.SET_NULL)
@@ -40,6 +43,11 @@ class Reminder(UUIDModel, TimeStamped):
 
     # Channels (list of channel names enabled for this reminder).
     channels = models.JSONField(default=list)
+    # Buttons shown on the push notification:
+    # [{"action": "taken", "title": "Wzięte", "url": "/api/...?token=..."}].
+    # The url is POSTed by the service worker, so it must carry its own
+    # signed token (no session cookie / CSRF header is available there).
+    actions = models.JSONField(default=list, blank=True)
 
     status = models.CharField(
         max_length=10, choices=Status.choices, default=Status.SCHEDULED, db_index=True

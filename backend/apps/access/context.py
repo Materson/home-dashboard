@@ -12,10 +12,11 @@ Scoping policy:
 Default stance: **deny-all**. Any read must go through ``scope_*`` or
 ``require`` — bare ``.objects.all()`` in selectors is a bug.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Iterable
 from uuid import UUID
 
@@ -74,9 +75,7 @@ class AccessContext:
         ).filter(Q(valid_until__isnull=True) | Q(valid_until__gt=timezone.now()))
 
         for module in MODULES:
-            self.scopes[module] = self._merge_grants(
-                [g for g in grants if g.module == module]
-            )
+            self.scopes[module] = self._merge_grants([g for g in grants if g.module == module])
 
     def _merge_grants(self, grants: list[AccessGrant]) -> Scope:
         allow_levels: set[str] = set()
@@ -96,7 +95,9 @@ class AccessContext:
                 # unconstrained: widens the scope
                 allowed_persons = None if allowed_persons is None else allowed_persons
             else:
-                allowed_persons = persons if allowed_persons is None else (allowed_persons | persons)
+                allowed_persons = (
+                    persons if allowed_persons is None else (allowed_persons | persons)
+                )
             if g.data_from and (data_from is None or g.data_from < data_from):
                 data_from = g.data_from
             if g.data_to and (data_to is None or g.data_to > data_to):
@@ -129,13 +130,26 @@ class AccessContext:
         if obj is None:
             return
         person_field = getattr(obj, "_access_person_field", None) or getattr(
-            type(obj)._meta, "access_person_field", None  # type: ignore[attr-defined]
+            type(obj)._meta,
+            "access_person_field",
+            None,  # type: ignore[attr-defined]
         )
         if person_field:
             pid = getattr(obj, person_field + "_id", None)
             allowed = self.scopes[module].person_ids
             if allowed is not None and (pid is None or pid not in allowed):
                 raise PermissionDenied(f"{module}:{level} denied for this person")
+        # Date windows ("health data from 2024 on") apply to single objects too.
+        date_field = getattr(obj, "_access_date_field", None)
+        if date_field:
+            value = getattr(obj, date_field, None)
+            if isinstance(value, datetime):
+                value = value.date()
+            s = self.scopes[module]
+            if value is not None and (
+                (s.data_from and value < s.data_from) or (s.data_to and value > s.data_to)
+            ):
+                raise PermissionDenied(f"{module}:{level} denied outside the allowed dates")
 
     def scope_by_person(
         self,

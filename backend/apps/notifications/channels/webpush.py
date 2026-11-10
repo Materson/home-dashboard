@@ -24,9 +24,15 @@ class WebPushChannel:
             "body": (
                 reminder.body
                 if reminder.sensitivity != Reminder.Sensitivity.PRIVATE
-                else "Open the dashboard to view."
+                else "Otwórz panel, aby zobaczyć szczegóły."  # private: no details off-device
             ),
             "url": "/reminders",
+            "tag": str(reminder.id),
+            # Buttons (e.g. "Wzięte"); the service worker POSTs action urls.
+            "actions": [
+                {"action": a["action"], "title": a["title"], "url": a["url"]}
+                for a in (reminder.actions or [])
+            ],
         }
         subs = user.push_subscriptions.all()
         for sub in subs:
