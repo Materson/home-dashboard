@@ -3,6 +3,7 @@
 Decoupled from User: children have a Person row but no login; a User may
 exist without a Person (admin-only). ``user`` is a non-nullable-but-optional
 1:1 link when both exist."""
+
 from __future__ import annotations
 
 from django.conf import settings
