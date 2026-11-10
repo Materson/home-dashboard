@@ -9,6 +9,12 @@ export function fmtNumber(value: number | string | null | undefined, digits = 0)
   }).format(Number(value));
 }
 
+/** A quantity without trailing zeros: "2.00" → "2", "1.50" → "1,5". */
+export function fmtQty(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return new Intl.NumberFormat(i18n.language, { maximumFractionDigits: 2 }).format(Number(value));
+}
+
 /** Money amount with currency, e.g. "1 234,50 PLN". */
 export function fmtMoney(value: number | string | null | undefined, currency = "PLN"): string {
   return value === null || value === undefined || value === ""

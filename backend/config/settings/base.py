@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "apps.finance",
     "apps.cars",
     "apps.health",
+    "apps.household",
 ]
 
 MIDDLEWARE = [

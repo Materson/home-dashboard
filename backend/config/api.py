@@ -1,5 +1,6 @@
 """The single Django Ninja API. Each app exposes its own router and registers
 here so there's one OpenAPI schema for the SPA to generate its client from."""
+
 from __future__ import annotations
 
 from ninja import NinjaAPI
@@ -11,6 +12,7 @@ from apps.cars.api import router as cars_router
 from apps.core.api import router as core_router
 from apps.finance.api import router as finance_router
 from apps.health.api import router as health_router
+from apps.household.api import router as household_router
 from apps.notifications.api import router as notifications_router
 from apps.people.api import router as people_router
 from apps.reminders.api import router as reminders_router
@@ -34,4 +36,5 @@ api.add_router("/notifications", notifications_router, tags=["notifications"])
 api.add_router("/finance", finance_router, tags=["finance"])
 api.add_router("/cars", cars_router, tags=["cars"])
 api.add_router("/health", health_router, tags=["health"])
+api.add_router("/household", household_router, tags=["household"])
 api.add_router("", core_router, tags=["core"])
