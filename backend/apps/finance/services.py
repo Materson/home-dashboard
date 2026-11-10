@@ -184,3 +184,19 @@ def settle_debt(ctx: AccessContext, *, name: str, currency: str, on: date) -> De
         date=on,
         notes="Rozliczenie",  # household language is Polish (see seed_finance_categories)
     )
+
+
+def check_related(kind: str, related_id: UUID | None) -> None:
+    """A transaction may point at a record in another app ("app.model" + id)
+    only if that record exists and its model is registered with an access
+    module; otherwise the link is rejected (ValueError → 422)."""
+    if not kind and related_id is None:
+        return
+    from apps.core.attachments import AttachmentError, resolve_subject  # noqa: PLC0415
+
+    if not kind or related_id is None:
+        raise ValueError("related_kind and related_id go together")
+    try:
+        resolve_subject(kind, related_id)
+    except AttachmentError as exc:
+        raise ValueError(f"unknown related record {kind}") from exc

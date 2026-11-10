@@ -57,6 +57,8 @@ class TransactionOut(Schema):
     person_id: UUID | None
     recurring_rule_id: UUID | None
     source_id: UUID | None
+    related_kind: str
+    related_id: UUID | None
 
 
 class TransactionIn(Schema):
@@ -67,6 +69,9 @@ class TransactionIn(Schema):
     person_id: UUID | None = None
     name: str
     notes: str = ""
+    # Optional "what it was for", e.g. related_kind="health.cabinetitem".
+    related_kind: str = ""
+    related_id: UUID | None = None
 
 
 class TransactionEdit(TransactionIn):
@@ -222,18 +227,28 @@ def list_transactions(request: HttpRequest, filters: Query[TransactionSearch]) -
     return list(qs[filters.offset : filters.offset + filters.limit])
 
 
-@router.post("/transactions", response=TransactionOut)
-def create_transaction(request: HttpRequest, payload: TransactionIn) -> Transaction:
-    get_ctx(request).require("finance", "edit")
-    return Transaction.objects.create(**payload.dict())
+@router.post("/transactions", response={200: TransactionOut, 422: dict})
+def create_transaction(request: HttpRequest, payload: TransactionIn):
+    ctx = get_ctx(request)
+    ctx.require("finance", "edit")
+    data = payload.dict()
+    try:
+        services.check_related(data["related_kind"], data["related_id"])
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+    return Transaction.objects.create(**data)
 
 
-@router.put("/transactions/{tx_id}", response=TransactionOut)
-def update_transaction(request: HttpRequest, tx_id: UUID, payload: TransactionEdit) -> Transaction:
+@router.put("/transactions/{tx_id}", response={200: TransactionOut, 422: dict})
+def update_transaction(request: HttpRequest, tx_id: UUID, payload: TransactionEdit):
     ctx = get_ctx(request)
     ctx.require("finance", "edit")
     tx = get_object_or_404(Transaction, pk=tx_id)
     data = payload.dict(exclude={"update_future"})
+    try:
+        services.check_related(data["related_kind"], data["related_id"])
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
     for k, v in data.items():
         setattr(tx, k, v)
     tx.save()

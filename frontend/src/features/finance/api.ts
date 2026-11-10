@@ -25,6 +25,9 @@ export type Transaction = {
   person_id: string | null;
   recurring_rule_id: string | null;
   source_id: string | null;
+  /** What it was for, e.g. "health.cabinetitem" + a medicine id ("" / null = nothing). */
+  related_kind: string;
+  related_id: string | null;
 };
 
 export type TransactionFilters = {

@@ -91,6 +91,13 @@ class Transaction(UUIDModel, TimeStamped):
     source_id = models.UUIDField(null=True, blank=True)
     source = GenericForeignKey("source_type", "source_id")
 
+    # What the money was *for*, chosen by the user (e.g. a medicine from the
+    # cabinet: "health.cabinetitem" + its id). Unlike ``source`` this is not
+    # owned by the other app — editing/deleting stays in Finance. Plain
+    # strings keep finance independent of the apps it can point at.
+    related_kind = models.CharField(max_length=60, blank=True, db_index=True)
+    related_id = models.UUIDField(null=True, blank=True)
+
     # When a RecurringRule materializes a transaction we keep the back-link so
     # "apply to future occurrences too" can update the rule's amount/name.
     recurring_rule = models.ForeignKey(
