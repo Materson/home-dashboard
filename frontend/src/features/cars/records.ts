@@ -3,47 +3,12 @@
  * table and the add/edit form from these, so adding a field to a record is a
  * one-line change here (plus the backend schema).
  */
+import type { FieldDef } from "@/components/records/fields";
+
 import type { RecordKind } from "./api";
 
-export type FieldType =
-  | "date"
-  | "int"
-  | "amount" // money or litres — comma/dot decimal, see AmountInput
-  | "text"
-  | "textarea"
-  | "bool"
-  | "select";
-
-export type FieldDef = {
-  name: string;
-  type: FieldType;
-  labelKey: string;
-  required?: boolean;
-  /** Shown as a table column. */
-  column?: boolean;
-  /** For "select": allowed values; labels come from `${optionsKey}.${value}`. */
-  options?: string[];
-  optionsKey?: string;
-  /** Default for a new record (dates default to today, selects to the first option). */
-  default?: string | boolean;
-  /** Hint under the field. */
-  hintKey?: string;
-  /** Currency shown next to this amount in the table. */
-  currencyField?: string;
-  /** Decimal places accepted when typing an "amount" (default 2). Tables always show 2. */
-  scale?: number;
-  /**
-   * Auto-filled from other fields until the user edits it by hand.
-   * `fn` returns the new value, "" to clear, or null to leave it alone;
-   * `active` (optional) decides from the hand-typed fields whether this
-   * field is the derived one right now.
-   */
-  compute?: {
-    from: string[];
-    fn: (state: Record<string, string | boolean>) => string | null;
-    active?: (handTyped: Set<string>) => boolean;
-  };
-};
+// Shared field machinery; re-exported for existing imports and tests.
+export { applyEdit, type FieldDef } from "@/components/records/fields";
 
 const num = (v: string | boolean | undefined) => (typeof v === "string" && v !== "" ? Number(v) : NaN);
 
@@ -200,28 +165,3 @@ export const RECORD_TABS: { key: CarTab; labelKey: string }[] = [
   { key: "deadlines", labelKey: "cars.tab.deadlines" },
   { key: "odometer", labelKey: "cars.tab.odometer" },
 ];
-
-/**
- * Apply one user edit to a form: store the value, mark computable fields the
- * user typed into as hand-typed, and re-derive the computed fields that
- * depend on the edited one. Pure, so the derivation rules are unit-tested.
- */
-export function applyEdit(
-  fields: FieldDef[],
-  state: Record<string, string | boolean>,
-  handTyped: Set<string>,
-  name: string,
-  value: string | boolean,
-): { state: Record<string, string | boolean>; handTyped: Set<string> } {
-  const def = fields.find((f) => f.name === name);
-  const typed = def?.compute ? new Set(handTyped).add(name) : handTyped;
-  const next = { ...state, [name]: value };
-  for (const f of fields) {
-    if (!f.compute || typed.has(f.name) || f.name === name) continue;
-    if (!f.compute.from.includes(name)) continue;
-    if (f.compute.active && !f.compute.active(typed)) continue;
-    const computed = f.compute.fn(next);
-    if (computed !== null) next[f.name] = computed;
-  }
-  return { state: next, handTyped: typed };
-}

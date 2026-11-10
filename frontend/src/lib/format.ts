@@ -34,3 +34,18 @@ export function parseIsoDate(value: string): Date {
   const [y, m, d] = value.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
+
+/** API datetime (ISO, any offset) → localized date + time. */
+export function fmtDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString(i18n.language, {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+/** Local Date → "YYYY-MM-DDTHH:MM" (local time, no offset — the server applies its zone). */
+export function isoDateTime(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${isoDate(d)}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
