@@ -18,8 +18,8 @@ export function LoginPage() {
 
   async function submit(values: typeof form.values) {
     setError(null);
-    // Pre-fetch the CSRF cookie by hitting a safe endpoint.
-    await fetch("/api/me/", { credentials: "include" });
+    // Make sure the csrftoken cookie exists before the login POST.
+    await fetch("/api/csrf", { credentials: "include" });
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
     const resp = await fetch("/api/_allauth/browser/v1/auth/login", {
       method: "POST",

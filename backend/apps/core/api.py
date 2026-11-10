@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from django.http import HttpRequest, HttpResponse
+from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404
 from ninja import Router
 
@@ -17,6 +18,14 @@ router = Router()
 @router.get("/healthz", auth=None)
 def healthz(request: HttpRequest) -> dict[str, str]:  # noqa: ARG001
     return {"status": "ok"}
+
+
+@router.get("/csrf", auth=None)
+def csrf(request: HttpRequest) -> dict[str, bool]:
+    """Sets the ``csrftoken`` cookie (e.g. before login) — the SPA echoes it
+    in ``X-CSRFToken`` on every unsafe request."""
+    get_token(request)
+    return {"ok": True}
 
 
 @router.get("/media/{attachment_id}/")

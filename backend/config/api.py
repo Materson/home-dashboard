@@ -3,6 +3,7 @@ here so there's one OpenAPI schema for the SPA to generate its client from."""
 from __future__ import annotations
 
 from ninja import NinjaAPI
+from ninja.security import django_auth
 
 from apps.accounts.api import router as accounts_router
 from apps.access.api import router as access_router
@@ -16,8 +17,11 @@ from apps.reminders.api import router as reminders_router
 api = NinjaAPI(
     title="Home Dashboard API",
     version="0.1.0",
-    # CSRF is enforced by Django's CsrfViewMiddleware; cookie-session auth is
-    # applied per-router. `healthz` stays public.
+    # Every endpoint needs a logged-in session (401 otherwise), and session
+    # auth makes Ninja enforce CSRF on unsafe methods — Ninja views are
+    # csrf_exempt, so Django's middleware alone does NOT protect them.
+    # Public endpoints opt out explicitly with auth=None (healthz, csrf).
+    auth=django_auth,
     docs_url="/docs" if __debug__ else None,
 )
 
