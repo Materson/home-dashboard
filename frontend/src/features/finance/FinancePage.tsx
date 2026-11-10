@@ -15,11 +15,19 @@ import {
   Tooltip,
 } from "@mantine/core";
 import { MonthPickerInput } from "@mantine/dates";
-import { IconCopy, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
+import { notifications } from "@mantine/notifications";
+import { IconBookmarkPlus, IconCopy, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
-import { financeApi, type Category, type Transaction, type TransactionFilters } from "./api";
+import {
+  financeApi,
+  type Bookmark,
+  type Category,
+  type Transaction,
+  type TransactionFilters,
+} from "./api";
+import { BookmarksBar } from "./BookmarksBar";
 import { MonthlyChart } from "./MonthlyChart";
 import { TransactionModal, type TxModalMode, type TxModalSource } from "./TransactionModal";
 
@@ -107,6 +115,29 @@ export function FinancePage() {
     setModalSource(tx);
     setModalOpen(true);
   }
+  function openFromBookmark(b: Bookmark) {
+    setModalMode("bookmark");
+    // The modal only reads the transaction fields a bookmark also has.
+    setModalSource({ ...b, id: "", date: "", recurring_rule_id: null, source_id: null });
+    setModalOpen(true);
+  }
+
+  const saveBookmark = useMutation({
+    mutationFn: (tx: Transaction) =>
+      financeApi.createBookmark({
+        label: tx.name.slice(0, 60),
+        name: tx.name,
+        amount: tx.amount,
+        currency: tx.currency,
+        category_id: tx.category_id,
+        person_id: tx.person_id,
+        notes: tx.notes,
+      }),
+    onSuccess: (b) => {
+      qc.invalidateQueries({ queryKey: ["finance", "bookmarks"] });
+      notifications.show({ message: t("finance.bookmarks.saved", { label: b.label }) });
+    },
+  });
 
   return (
     <Stack gap="lg">
@@ -141,6 +172,10 @@ export function FinancePage() {
       {categoriesQ.isError && <Alert color="red">{t("common.noAccess")}</Alert>}
 
       <MonthlyChart totals={totalsQ.data ?? []} endMonth={month} months={CHART_MONTHS} />
+
+      <Paper withBorder p="md">
+        <BookmarksBar onPick={openFromBookmark} />
+      </Paper>
 
       <Paper withBorder p="md">
         <Group gap="xs" wrap="wrap" mb="sm">
@@ -209,6 +244,11 @@ export function FinancePage() {
                       <Tooltip label={t("finance.action.duplicate")}>
                         <ActionIcon variant="subtle" onClick={() => openDuplicate(tx)}>
                           <IconCopy size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label={t("finance.bookmarks.add")}>
+                        <ActionIcon variant="subtle" onClick={() => saveBookmark.mutate(tx)}>
+                          <IconBookmarkPlus size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label={t("finance.action.delete")}>

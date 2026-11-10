@@ -7,6 +7,7 @@
  *                   "apply to future occurrences too?"
  *   • "duplicate" — fields prefilled from the source tx but the **date is
  *                   reset to today** and we create a new row on save
+ *   • "bookmark"  — same as duplicate, the source being a saved bookmark
  *
  * The modal remounts whenever `mode`/`source` changes, so re-opening it
  * never shows stale values from the previous session.
@@ -16,7 +17,6 @@ import {
   Button,
   Checkbox,
   Modal,
-  NumberInput,
   Select,
   Stack,
   Tabs,
@@ -25,10 +25,11 @@ import {
 import { DatePickerInput } from "@mantine/dates";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 
 import { financeApi, type Category, type Transaction } from "./api";
 
-export type TxModalMode = "new" | "edit" | "duplicate";
+export type TxModalMode = "new" | "edit" | "duplicate" | "bookmark";
 export type TxModalSource = Transaction | null;
 export type TxKind = "expense" | "income" | "transfer";
 
@@ -116,13 +117,11 @@ export function TransactionModal(props: {
           onChange={(e) => setForm({ ...form, name: e.currentTarget.value })}
           required
         />
-        <NumberInput
+        <AmountInput
           label={t("finance.field.amount")}
-          decimalScale={2}
-          fixedDecimalScale
-          value={Number(form.amount)}
-          onChange={(v) => setForm({ ...form, amount: String(v ?? 0) })}
-          min={0}
+          value={form.amount}
+          onChange={(amount) => setForm({ ...form, amount })}
+          required
         />
         <TextInput
           label={t("finance.field.currency")}
@@ -159,7 +158,8 @@ export function TransactionModal(props: {
             onChange={(e) => setApplyToFuture(e.currentTarget.checked)}
           />
         )}
-        <Button onClick={save} loading={saving} disabled={!form.category_id || !form.name}>
+        <Button onClick={save} loading={saving} disabled={!form.category_id || !form.name || !isPositiveAmount(form.amount)}
+        >
           {t(mode === "edit" ? "finance.action.saveChanges" : "finance.action.save")}
         </Button>
       </Stack>
@@ -194,7 +194,7 @@ function buildInitial(mode: TxModalMode, source: TxModalSource, _kind: TxKind) {
   if (mode === "new" || !source) {
     return {
       date: today,
-      amount: "0.00",
+      amount: "",
       currency: "PLN",
       category_id: "",
       person_id: null as string | null,
@@ -203,7 +203,8 @@ function buildInitial(mode: TxModalMode, source: TxModalSource, _kind: TxKind) {
     };
   }
   return {
-    date: mode === "duplicate" ? today : source.date,
+    // Duplicates and bookmarks are new entries happening now.
+    date: mode === "edit" ? source.date : today,
     amount: source.amount,
     currency: source.currency,
     category_id: source.category_id,

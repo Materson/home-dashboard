@@ -86,6 +86,45 @@ export type OverpaymentComparison = {
   months_saved: number;
 };
 
+export type Bookmark = {
+  id: string;
+  label: string;
+  name: string;
+  amount: string;
+  currency: string;
+  category_id: string;
+  person_id: string | null;
+  notes: string;
+  sort_order: number;
+};
+export type BookmarkInput = Omit<Bookmark, "id" | "sort_order"> & { sort_order?: number };
+
+/** gave: money went to them (a loan or a repayment); received: the reverse. */
+export type DebtDirection = "gave" | "received";
+
+export type DebtEntry = {
+  id: string;
+  /** "Who" — plain text, matched case-insensitively. */
+  counterparty_name: string;
+  direction: DebtDirection;
+  amount: string;
+  currency: string;
+  date: string;
+  due_date: string | null;
+  notes: string;
+  /** Part of a closed period (the balance reached zero afterwards). */
+  settled?: boolean;
+};
+export type DebtEntryInput = Omit<DebtEntry, "id" | "settled">;
+
+export type DebtBalance = {
+  counterparty_name: string;
+  currency: string;
+  balance: string; // > 0 they owe us, < 0 we owe them, 0 settled
+  entries: number;
+  last_date: string;
+};
+
 function csrf(): string {
   return document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
 }
@@ -99,6 +138,15 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const resp = await fetch("/api/finance" + path, { ...init, headers, credentials: "include" });
   if (!resp.ok) throw new Error(`${method} ${path} failed: ${resp.status}`);
   return (await resp.json()) as T;
+}
+
+/** Like `call`, for endpoints that may answer 204 No Content. */
+async function callNoContent(path: string, init: RequestInit = {}): Promise<void> {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Type", "application/json");
+  headers.set("X-CSRFToken", csrf());
+  const resp = await fetch("/api/finance" + path, { ...init, headers, credentials: "include" });
+  if (!resp.ok) throw new Error(`${init.method ?? "GET"} ${path} failed: ${resp.status}`);
 }
 
 function qs(f: TransactionFilters): string {
@@ -130,5 +178,30 @@ export const financeApi = {
     call<OverpaymentComparison>(`/loans/${id}/simulate`, {
       method: "POST",
       body: JSON.stringify({ extra }),
+    }),
+  listBookmarks: () => call<Bookmark[]>("/bookmarks"),
+  createBookmark: (body: BookmarkInput) =>
+    call<Bookmark>("/bookmarks", { method: "POST", body: JSON.stringify(body) }),
+  deleteBookmark: (id: string) => call<{ deleted: boolean }>(`/bookmarks/${id}`, { method: "DELETE" }),
+
+  debtBalances: (includeSettled: boolean) =>
+    call<DebtBalance[]>(`/debts/balances?include_settled=${includeSettled}`),
+  debtEntries: (name: string, includeSettled: boolean) =>
+    call<DebtEntry[]>(
+      `/debts/entries?name=${encodeURIComponent(name)}&include_settled=${includeSettled}`,
+    ),
+  addDebtEntry: (body: DebtEntryInput) =>
+    call<DebtEntry>("/debts/entries", { method: "POST", body: JSON.stringify(body) }),
+  deleteDebtEntry: (id: string) =>
+    call<{ deleted: boolean }>(`/debts/entries/${id}`, { method: "DELETE" }),
+  /** Removes the person and every entry recorded for them. */
+  deleteCounterparty: (name: string) =>
+    call<{ deleted: number }>(`/debts/counterparty?name=${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+  settleDebt: (name: string, currency: string, date: string) =>
+    callNoContent("/debts/settle", {
+      method: "POST",
+      body: JSON.stringify({ name, currency, date }),
     }),
 };

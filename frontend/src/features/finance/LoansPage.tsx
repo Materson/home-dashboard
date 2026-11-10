@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Group,
-  NumberInput,
   Paper,
   ScrollArea,
   Select,
@@ -15,6 +14,7 @@ import {
 import { DatePickerInput } from "@mantine/dates";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 
 import { financeApi, type Loan, type OverpaymentComparison, type Schedule } from "./api";
 
@@ -110,12 +110,12 @@ function ScheduleTable({ schedule, title }: { schedule: Schedule; title: string 
 function OverpaymentSimulator({ loanId }: { loanId: string }) {
   const { t } = useTranslation();
   const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10));
-  const [amount, setAmount] = useState<number>(10000);
+  const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"shorten_term" | "reduce_installment">("shorten_term");
   const [result, setResult] = useState<OverpaymentComparison | null>(null);
 
   const simulate = useMutation({
-    mutationFn: () => financeApi.simulate(loanId, { date, amount: String(amount), mode }),
+    mutationFn: () => financeApi.simulate(loanId, { date, amount, mode }),
     onSuccess: setResult,
   });
 
@@ -131,14 +131,7 @@ function OverpaymentSimulator({ loanId }: { loanId: string }) {
             value={new Date(date)}
             onChange={(d) => setDate((d ?? new Date()).toISOString().slice(0, 10))}
           />
-          <NumberInput
-            label={t("finance.field.amount")}
-            decimalScale={2}
-            fixedDecimalScale
-            value={amount}
-            onChange={(v) => setAmount(Number(v ?? 0))}
-            min={0}
-          />
+          <AmountInput label={t("finance.field.amount")} value={amount} onChange={setAmount} />
           <Select
             label={t("loans.sim.mode")}
             data={[
@@ -148,7 +141,11 @@ function OverpaymentSimulator({ loanId }: { loanId: string }) {
             value={mode}
             onChange={(v) => setMode((v as typeof mode) ?? "shorten_term")}
           />
-          <Button loading={simulate.isPending} onClick={() => simulate.mutate()}>
+          <Button
+            loading={simulate.isPending}
+            disabled={!isPositiveAmount(amount)}
+            onClick={() => simulate.mutate()}
+          >
             {t("loans.sim.run")}
           </Button>
         </Group>

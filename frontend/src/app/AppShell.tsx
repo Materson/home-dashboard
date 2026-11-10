@@ -17,6 +17,7 @@ const NAV: NavGroup[] = [
     children: [
       { to: "/finance", labelKey: "nav.transactions", module: "finance" },
       { to: "/finance/loans", labelKey: "nav.loans", module: "finance" },
+      { to: "/finance/debts", labelKey: "nav.debts", module: "finance" },
     ],
   },
   { to: "/cars", labelKey: "nav.cars", module: "cars" },

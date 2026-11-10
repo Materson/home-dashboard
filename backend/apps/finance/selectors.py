@@ -1,4 +1,5 @@
 """Finance read queries — every function takes an AccessContext."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from django.db.models import Q, QuerySet, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
-from .models import Category, Loan, RecurringRule, Transaction
+from .models import Category, DebtEntry, Loan, RecurringRule, Transaction, TransactionBookmark
 
 if TYPE_CHECKING:
     from apps.access.context import AccessContext
@@ -19,14 +20,14 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class TransactionFilter:
-    q: str | None = None               # name/notes text
+    q: str | None = None  # name/notes text
     date_from: date | None = None
     date_to: date | None = None
     amount_min: Decimal | None = None
     amount_max: Decimal | None = None
     category_keys: list[str] | None = None
     person_ids: list[UUID] | None = None
-    kind: str | None = None            # 'income' | 'expense' | 'transfer'
+    kind: str | None = None  # 'income' | 'expense' | 'transfer'
 
 
 def list_categories(ctx: AccessContext) -> QuerySet[Category]:
@@ -126,11 +127,94 @@ def list_recurring(ctx: AccessContext) -> QuerySet[RecurringRule]:
 
 
 def list_loans(ctx: AccessContext) -> QuerySet[Loan]:
-    return (
-        ctx.scope_by_person(
-            module="finance",
-            qs=Loan.objects.filter(archived_at__isnull=True),
-            person_field="person_id",
+    return ctx.scope_by_person(
+        module="finance",
+        qs=Loan.objects.filter(archived_at__isnull=True),
+        person_field="person_id",
+    ).prefetch_related("rate_changes", "overpayments")
+
+
+# ---- Bookmarks ---------------------------------------------------------
+
+
+def list_bookmarks(ctx: AccessContext) -> QuerySet[TransactionBookmark]:
+    """The caller's own bookmarks — never anyone else's."""
+    if not ctx.has("finance", "view") or ctx.user_id is None:
+        return TransactionBookmark.objects.none()
+    return TransactionBookmark.objects.filter(owner_id=ctx.user_id).select_related("category")
+
+
+# ---- Debts -------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class DebtBalance:
+    counterparty_name: str
+    currency: str
+    balance: Decimal  # > 0 they owe us, < 0 we owe them
+    entries: int  # in the shown period (current only, unless include_settled)
+    last_date: date
+
+
+def _name_key(name: str) -> str:
+    """Case/space-insensitive identity: "Kasia", "kasia " and "KASIA" match."""
+    return name.strip().lower()
+
+
+def list_debt_entries(ctx: AccessContext, *, name: str | None = None) -> QuerySet[DebtEntry]:
+    if not ctx.has("finance", "view"):
+        return DebtEntry.objects.none()
+    qs = DebtEntry.objects.all()
+    if name:
+        qs = qs.filter(counterparty_name__iexact=name.strip())
+    return qs
+
+
+def _grouped_with_settled_flag(entries: list[DebtEntry]) -> dict[tuple, list[DebtEntry]]:
+    """Group entries per counterparty+currency, oldest first, and set
+    ``e.settled`` on every entry up to the last moment the running balance
+    hit zero - that part of the history is closed (settled or repaid)."""
+    groups: dict[tuple, list[DebtEntry]] = {}
+    for e in sorted(entries, key=lambda e: (e.date, e.created_at)):
+        groups.setdefault((_name_key(e.counterparty_name), e.currency), []).append(e)
+    for group in groups.values():
+        running, last_zero = Decimal("0"), -1
+        for i, e in enumerate(group):
+            running += e.signed_amount
+            if running == 0:
+                last_zero = i
+        for i, e in enumerate(group):
+            e.settled = i <= last_zero
+    return groups
+
+
+def debt_history(
+    ctx: AccessContext, *, name: str, include_settled: bool = False
+) -> list[DebtEntry]:
+    """One counterparty's entries, newest first. Settled history is left out
+    unless ``include_settled``; each entry carries a ``settled`` flag."""
+    groups = _grouped_with_settled_flag(list(list_debt_entries(ctx, name=name)))
+    entries = [e for g in groups.values() for e in g if include_settled or not e.settled]
+    return sorted(entries, key=lambda e: (e.date, e.created_at), reverse=True)
+
+
+def debt_balances(ctx: AccessContext, *, include_settled: bool = False) -> list[DebtBalance]:
+    """One row per (counterparty, currency) for everyone ever recorded -
+    settled ones included (balance 0) so they stay pickable.
+    ``include_settled`` only decides whether ``entries`` counts the closed
+    history too. Open balances first (largest first), then settled by name."""
+    rows: list[DebtBalance] = []
+    for group in _grouped_with_settled_flag(list(list_debt_entries(ctx))).values():
+        shown = group if include_settled else [e for e in group if not e.settled]
+        rows.append(
+            DebtBalance(
+                counterparty_name=group[0].counterparty_name.strip(),  # first spelling stays
+                currency=group[0].currency,
+                balance=sum((e.signed_amount for e in group), Decimal("0")),
+                entries=len(shown),
+                last_date=group[-1].date,
+            )
         )
-        .prefetch_related("rate_changes", "overpayments")
+    return sorted(
+        rows, key=lambda r: (r.balance == 0, -abs(r.balance), _name_key(r.counterparty_name))
     )

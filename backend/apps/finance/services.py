@@ -1,16 +1,19 @@
 """Finance writes — only path that mutates the finance tables."""
+
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ObjectDoesNotExist
+from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.db import models
 from django.db.transaction import atomic
 
-from .models import Category, Transaction
+from .models import Category, DebtEntry, Transaction, TransactionBookmark
+from .selectors import list_debt_entries
 
 if TYPE_CHECKING:
     from apps.access.context import AccessContext
@@ -18,7 +21,7 @@ if TYPE_CHECKING:
 
 @atomic
 def upsert_linked_transaction(
-    ctx: "AccessContext",
+    ctx: AccessContext,
     *,
     source_obj: models.Model,
     category_key: str,
@@ -40,7 +43,9 @@ def upsert_linked_transaction(
     try:
         category = Category.objects.get(key=category_key)
     except ObjectDoesNotExist as exc:
-        raise ValueError(f"unknown category key {category_key!r} — run seed_finance_categories") from exc
+        raise ValueError(
+            f"unknown category key {category_key!r} — run seed_finance_categories"
+        ) from exc
 
     ct = ContentType.objects.get_for_model(type(source_obj))
     oid = source_obj.pk
@@ -70,7 +75,7 @@ def delete_linked_transaction(source_obj: models.Model) -> None:
 
 @atomic
 def propagate_edit_to_rule(
-    ctx: "AccessContext",
+    ctx: AccessContext,
     transaction: Transaction,
     *,
     update_future: bool,
@@ -93,4 +98,83 @@ def propagate_edit_to_rule(
     rule.category = transaction.category
     rule.person_id = transaction.person_id
     rule.notes = transaction.notes
-    rule.save(update_fields=["name", "amount", "currency", "category", "person", "notes", "updated_at"])
+    rule.save(
+        update_fields=["name", "amount", "currency", "category", "person", "notes", "updated_at"]
+    )
+
+
+# ---- Bookmarks ---------------------------------------------------------
+
+
+def create_bookmark(ctx: AccessContext, **fields) -> TransactionBookmark:
+    ctx.require("finance", "edit")
+    return TransactionBookmark.objects.create(owner_id=ctx.user_id, **fields)
+
+
+def _own_bookmark(ctx: AccessContext, bookmark_id: UUID) -> TransactionBookmark:
+    ctx.require("finance", "edit")
+    bm = TransactionBookmark.objects.filter(pk=bookmark_id).first()
+    if bm is None or bm.owner_id != ctx.user_id:
+        raise PermissionDenied("not your bookmark")
+    return bm
+
+
+def update_bookmark(ctx: AccessContext, bookmark_id: UUID, **fields) -> TransactionBookmark:
+    bm = _own_bookmark(ctx, bookmark_id)
+    for k, v in fields.items():
+        setattr(bm, k, v)
+    bm.save()
+    return bm
+
+
+def delete_bookmark(ctx: AccessContext, bookmark_id: UUID) -> None:
+    _own_bookmark(ctx, bookmark_id).delete()
+
+
+# ---- Debts -------------------------------------------------------------
+
+
+def add_debt_entry(ctx: AccessContext, **fields) -> DebtEntry:
+    ctx.require("finance", "edit")
+    fields["counterparty_name"] = (fields.get("counterparty_name") or "").strip()
+    if not fields["counterparty_name"]:
+        raise ValueError("who is required")
+    if Decimal(fields["amount"]) <= 0:
+        raise ValueError("amount must be positive")
+    return DebtEntry.objects.create(created_by_id=ctx.user_id, **fields)
+
+
+def delete_debt_entry(ctx: AccessContext, entry_id: UUID) -> None:
+    ctx.require("finance", "edit")
+    DebtEntry.objects.filter(pk=entry_id).delete()
+
+
+def delete_counterparty(ctx: AccessContext, name: str) -> int:
+    """Remove a person from the debts list: every entry recorded for them
+    (any spelling, any currency). Returns how many entries were deleted."""
+    ctx.require("finance", "edit")
+    deleted, _ = DebtEntry.objects.filter(counterparty_name__iexact=name.strip()).delete()
+    return deleted
+
+
+@atomic
+def settle_debt(ctx: AccessContext, *, name: str, currency: str, on: date) -> DebtEntry | None:
+    """Record the repayment that brings ``name``'s balance to zero.
+
+    Returns ``None`` when there is nothing outstanding."""
+    ctx.require("finance", "edit")
+    entries = list_debt_entries(ctx, name=name).filter(currency=currency)
+    balance = sum((e.signed_amount for e in entries), Decimal("0"))
+    if balance == 0:
+        return None
+    # They owe us -> they pay us back (we receive); we owe them -> we give.
+    direction = DebtEntry.Direction.RECEIVED if balance > 0 else DebtEntry.Direction.GAVE
+    return add_debt_entry(
+        ctx,
+        counterparty_name=name,
+        direction=direction,
+        amount=abs(balance),
+        currency=currency,
+        date=on,
+        notes="Rozliczenie",  # household language is Polish (see seed_finance_categories)
+    )

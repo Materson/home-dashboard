@@ -23,9 +23,9 @@ Design notes
   ``RateSegment`` list; the row with ``effective_from == loan.start_date``
   is the "base" segment.
 """
+
 from __future__ import annotations
 
-from datetime import date
 from decimal import Decimal
 
 from django.conf import settings
@@ -51,7 +51,9 @@ class Category(UUIDModel, TimeStamped):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="children"
     )
     color = models.CharField(max_length=7, default="#868e96")
-    is_system = models.BooleanField(default=False, help_text="Seeded by the app; UI prevents delete.")
+    is_system = models.BooleanField(
+        default=False, help_text="Seeded by the app; UI prevents delete."
+    )
 
     class Meta:
         ordering = ("name",)
@@ -191,7 +193,9 @@ class RateChange(models.Model):
     class Meta:
         ordering = ("effective_from",)
         constraints = [
-            models.UniqueConstraint(fields=["loan", "effective_from"], name="finance_ratechange_unique"),
+            models.UniqueConstraint(
+                fields=["loan", "effective_from"], name="finance_ratechange_unique"
+            ),
         ]
 
     def __str__(self) -> str:
@@ -211,7 +215,11 @@ class Overpayment(models.Model):
     # Linked Transaction on the finance ledger (optional — the overpayment is
     # usually already captured as a Transaction).
     transaction = models.ForeignKey(
-        Transaction, null=True, blank=True, on_delete=models.SET_NULL, related_name="loan_overpayment"
+        Transaction,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="loan_overpayment",
     )
 
     class Meta:
@@ -219,3 +227,87 @@ class Overpayment(models.Model):
 
     def __str__(self) -> str:
         return f"{self.loan_id} {self.date} {self.amount}"
+
+
+# ---- Bookmarks ---------------------------------------------------------
+
+
+class TransactionBookmark(UUIDModel, TimeStamped):
+    """A user's saved template for a transaction they add often.
+
+    Unlike ``RecurringRule`` it never creates anything on its own — the user
+    picks it to get a pre-filled "add transaction" form. Private to its owner."""
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="finance_bookmarks"
+    )
+    label = models.CharField(max_length=60, help_text="Short chip text, e.g. 'Biedronka'.")
+    name = models.CharField(max_length=200)
+    amount = money_amount_field()
+    currency = currency_field()
+    category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="bookmarks")
+    person = models.ForeignKey(
+        "people.Person", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    notes = models.TextField(blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("sort_order", "label")
+
+    def __str__(self) -> str:
+        return self.label
+
+
+# ---- Debts / IOUs ------------------------------------------------------
+
+
+class DebtEntry(UUIDModel, TimeStamped):
+    """Money that moved between the household and someone else, expected back.
+
+    Deliberately **not** a ``Transaction``: the money is expected back, so it
+    must never count as income or expense. Lending and repaying are the same
+    movement (money leaves us), as are borrowing and being repaid (money comes
+    in), so each entry only records the direction. A counterparty's balance is
+
+        sum(gave) - sum(received)
+
+    positive → they owe the household, negative → the household owes them.
+    The counterparty ("who") is plain text, matched case-insensitively, so
+    family members and outsiders are recorded the same way."""
+
+    class Direction(models.TextChoices):
+        GAVE = "gave", "We gave them money"
+        RECEIVED = "received", "They gave us money"
+
+    counterparty_name = models.CharField(max_length=120)
+    direction = models.CharField(max_length=10, choices=Direction.choices)
+    amount = money_amount_field()
+    currency = currency_field()
+    date = models.DateField(db_index=True)
+    due_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+"
+    )
+
+    class Meta:
+        ordering = ("-date", "-created_at")
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(counterparty_name=""), name="finance_debt_name_required"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0), name="finance_debt_amount_positive"
+            ),
+        ]
+
+    @property
+    def signed_amount(self) -> Decimal:
+        """Effect on "they owe us": + when we gave, - when we received."""
+        return self.amount if self.direction == self.Direction.GAVE else -self.amount
+
+    def __str__(self) -> str:
+        return (
+            f"{self.date} {self.direction} {self.counterparty_name} {self.amount} {self.currency}"
+        )

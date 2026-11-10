@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from django.http import HttpRequest
@@ -12,7 +13,15 @@ from apps.access.context import get_ctx
 
 from . import selectors, services
 from .loans import schedule as loan_schedule
-from .models import Category, Loan, RateChange, RecurringRule, Transaction
+from .models import (
+    Category,
+    DebtEntry,
+    Loan,
+    RateChange,
+    RecurringRule,
+    Transaction,
+    TransactionBookmark,
+)
 
 router = Router()
 
@@ -310,9 +319,7 @@ def simulate_loan(
 
     segments = _loan_rate_segments(loan)
     existing = [
-        loan_schedule.Overpayment(
-            op.date, op.amount, loan_schedule.OverpaymentMode(op.mode)
-        )
+        loan_schedule.Overpayment(op.date, op.amount, loan_schedule.OverpaymentMode(op.mode))
         for op in loan.overpayments.all()
     ]
     extra = loan_schedule.Overpayment(
@@ -381,3 +388,136 @@ def _schedule_to_out(s: loan_schedule.AmortizationSchedule) -> ScheduleOut:
         total_overpayment=s.total_overpayment,
         months=s.months,
     )
+
+
+# -------------------- Bookmarks --------------------
+
+
+class BookmarkOut(Schema):
+    id: UUID
+    label: str
+    name: str
+    amount: Decimal
+    currency: str
+    category_id: UUID
+    person_id: UUID | None
+    notes: str
+    sort_order: int
+
+
+class BookmarkIn(Schema):
+    label: str
+    name: str
+    amount: Decimal
+    currency: str = "PLN"
+    category_id: UUID
+    person_id: UUID | None = None
+    notes: str = ""
+    sort_order: int = 0
+
+
+@router.get("/bookmarks", response=list[BookmarkOut])
+def list_bookmarks(request: HttpRequest) -> list[TransactionBookmark]:
+    return list(selectors.list_bookmarks(get_ctx(request)))
+
+
+@router.post("/bookmarks", response=BookmarkOut)
+def create_bookmark(request: HttpRequest, payload: BookmarkIn) -> TransactionBookmark:
+    return services.create_bookmark(get_ctx(request), **payload.dict())
+
+
+@router.put("/bookmarks/{bookmark_id}", response=BookmarkOut)
+def update_bookmark(
+    request: HttpRequest, bookmark_id: UUID, payload: BookmarkIn
+) -> TransactionBookmark:
+    return services.update_bookmark(get_ctx(request), bookmark_id, **payload.dict())
+
+
+@router.delete("/bookmarks/{bookmark_id}")
+def delete_bookmark(request: HttpRequest, bookmark_id: UUID) -> dict[str, bool]:
+    services.delete_bookmark(get_ctx(request), bookmark_id)
+    return {"deleted": True}
+
+
+# -------------------- Debts --------------------
+
+
+class DebtEntryOut(Schema):
+    id: UUID
+    counterparty_name: str
+    direction: str
+    amount: Decimal
+    currency: str
+    date: date
+    due_date: date | None
+    notes: str
+    settled: bool = False  # part of a closed (balance reached zero) period
+
+
+class DebtEntryIn(Schema):
+    counterparty_name: str
+    direction: Literal["gave", "received"]
+    amount: Decimal
+    currency: str = "PLN"
+    date: date
+    due_date: date | None = None
+    notes: str = ""
+
+
+class DebtBalanceOut(Schema):
+    counterparty_name: str
+    currency: str
+    balance: Decimal
+    entries: int
+    last_date: date
+
+
+class DebtEntriesQuery(Schema):
+    name: str
+    include_settled: bool = False
+
+
+class SettleIn(Schema):
+    name: str
+    currency: str = "PLN"
+    date: date
+
+
+@router.get("/debts/balances", response=list[DebtBalanceOut])
+def debt_balances(
+    request: HttpRequest, include_settled: bool = False
+) -> list[selectors.DebtBalance]:
+    return selectors.debt_balances(get_ctx(request), include_settled=include_settled)
+
+
+@router.get("/debts/entries", response=list[DebtEntryOut])
+def list_debt_entries(request: HttpRequest, q: Query[DebtEntriesQuery]) -> list[DebtEntry]:
+    return selectors.debt_history(get_ctx(request), name=q.name, include_settled=q.include_settled)
+
+
+@router.post("/debts/entries", response={200: DebtEntryOut, 422: dict})
+def add_debt_entry(request: HttpRequest, payload: DebtEntryIn):
+    try:
+        return services.add_debt_entry(get_ctx(request), **payload.dict())
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+@router.delete("/debts/entries/{entry_id}")
+def delete_debt_entry(request: HttpRequest, entry_id: UUID) -> dict[str, bool]:
+    services.delete_debt_entry(get_ctx(request), entry_id)
+    return {"deleted": True}
+
+
+@router.delete("/debts/counterparty")
+def delete_counterparty(request: HttpRequest, name: str) -> dict[str, int]:
+    """Remove a person and their whole history from the debts list."""
+    return {"deleted": services.delete_counterparty(get_ctx(request), name)}
+
+
+@router.post("/debts/settle", response={200: DebtEntryOut, 204: None})
+def settle_debt(request: HttpRequest, payload: SettleIn):
+    entry = services.settle_debt(
+        get_ctx(request), name=payload.name, currency=payload.currency, on=payload.date
+    )
+    return entry if entry is not None else (204, None)
