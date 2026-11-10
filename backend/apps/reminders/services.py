@@ -1,8 +1,10 @@
 """Reminder service layer. The only way other apps create reminders."""
+
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 from dateutil.rrule import rrulestr
 from django.contrib.contenttypes.models import ContentType
@@ -19,12 +21,12 @@ if TYPE_CHECKING:
 
 @atomic
 def schedule(
-    ctx: "AccessContext",
+    ctx: AccessContext,
     *,
     title: str,
     body: str = "",
     target: models.Model | None = None,
-    recipients: Sequence["User"],
+    recipients: Sequence[User],
     channels: Sequence[str],
     due_at: datetime | None = None,
     due_odometer_km: int | None = None,
@@ -87,3 +89,24 @@ def mark_done(reminder: Reminder) -> None:
     reminder.status = Reminder.Status.DONE
     reminder.done_at = timezone.now()
     reminder.save(update_fields=["status", "done_at"])
+
+
+def cancel_for_target(target: models.Model) -> int:
+    """Cancel the not-yet-sent reminders attached to ``target`` (used when
+    the record they're about is edited, replaced or deleted)."""
+    ct = ContentType.objects.get_for_model(type(target))
+    return Reminder.objects.filter(
+        content_type=ct, object_id=target.pk, status=Reminder.Status.SCHEDULED
+    ).update(status=Reminder.Status.CANCELLED)
+
+
+def fire_odometer_reminders(car_id, odometer_km: int, lead_km: int = 0) -> int:
+    """Make distance-based reminders for ``car_id`` due now once the odometer
+    is within ``lead_km`` of their target. The minute beat then delivers
+    them like any time-based reminder."""
+    return Reminder.objects.filter(
+        car_id=car_id,
+        status=Reminder.Status.SCHEDULED,
+        due_at__isnull=True,
+        due_odometer_km__lte=odometer_km + lead_km,
+    ).update(due_at=timezone.now())
