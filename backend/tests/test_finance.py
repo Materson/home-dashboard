@@ -1,13 +1,13 @@
 """Finance tests: upsert idempotency, recurring materialization, permission scoping."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from django.core.exceptions import PermissionDenied
 
 from apps.access.context import AccessContext
-from apps.access.models import AccessGrant
 from apps.finance import recurring, selectors, services
 from apps.finance.models import Category, RecurringRule, Transaction
 
@@ -71,7 +71,7 @@ def test_upsert_requires_edit_permission(_system_categories):
     user = UserFactory()  # no grants → deny-all
     ctx = AccessContext.for_user(user)
     source = PersonFactory()
-    with pytest.raises(Exception):  # PermissionDenied
+    with pytest.raises(PermissionDenied):
         services.upsert_linked_transaction(
             ctx,
             source_obj=source,
@@ -117,16 +117,9 @@ def test_materialize_due_creates_txs_and_advances_cursor(_system_categories, _pa
         start_date=date(2026, 1, 1),
         next_run_at=date(2026, 1, 1),
     )
-    # Pretend "today" is march 15 — jan + feb + mar should be materialized.
-    import datetime as _dt
-
-    class _FakeNow:
-        @staticmethod
-        def now(tz=None):
-            return _dt.datetime(2026, 3, 15, tzinfo=tz)
-
+    # "Today" is March 15 — Jan, Feb and Mar occurrences should be materialized.
     created = recurring.materialize_due(
-        now=_dt.datetime(today.year, today.month, today.day, tzinfo=_dt.timezone.utc)
+        now=datetime(today.year, today.month, today.day, 12, tzinfo=UTC)
     )
     assert created == 3
     rule.refresh_from_db()
@@ -165,3 +158,37 @@ def test_propagate_edit_to_rule_copies_edited_fields(_system_categories, _parent
     rule.refresh_from_db()
     assert rule.amount == Decimal("9000")
     assert rule.name == "Salary (raise)"
+
+
+def test_monthly_totals_window_ends_at_until_month(_system_categories, _parent_user):
+    """Regression: the chart window must follow the picked month, not be all-time."""
+    fuel = _system_categories["car.fuel"]
+    for d, amount in [
+        (date(2025, 12, 31), "50"),  # just outside a 3-month window ending March 2026
+        (date(2026, 1, 1), "100"),
+        (date(2026, 3, 31), "300"),
+        (date(2026, 4, 1), "999"),  # after the window
+    ]:
+        Transaction.objects.create(
+            date=d, amount=Decimal(amount), currency="PLN", category=fuel, name="fuel"
+        )
+
+    ctx = AccessContext.for_user(_parent_user)
+    rows = selectors.monthly_totals(ctx, until=date(2026, 3, 15), months=3)
+
+    assert {(r.year_month, r.total) for r in rows} == {
+        ("2026-01", Decimal("100.00")),
+        ("2026-03", Decimal("300.00")),
+    }
+
+
+def test_monthly_totals_empty_without_finance_grant(_system_categories):
+    Transaction.objects.create(
+        date=date(2026, 3, 1),
+        amount=Decimal("10"),
+        currency="PLN",
+        category=_system_categories["car.fuel"],
+        name="x",
+    )
+    ctx = AccessContext.for_user(UserFactory())  # no grants
+    assert selectors.monthly_totals(ctx, until=date(2026, 3, 1)) == []

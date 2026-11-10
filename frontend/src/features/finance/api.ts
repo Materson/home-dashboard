@@ -121,7 +121,8 @@ export const financeApi = {
   updateTransaction: (id: string, body: Omit<Transaction, "id" | "recurring_rule_id" | "source_id"> & { update_future?: boolean }) =>
     call<Transaction>(`/transactions/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteTransaction: (id: string) => call<{ deleted: boolean }>(`/transactions/${id}`, { method: "DELETE" }),
-  monthlyTotals: () => call<MonthlyTotal[]>("/monthly-totals"),
+  monthlyTotals: (until: string, months = 12) =>
+    call<MonthlyTotal[]>(`/monthly-totals?until=${until}&months=${months}`),
 
   listLoans: () => call<Loan[]>("/loans"),
   schedule: (id: string) => call<Schedule>(`/loans/${id}/schedule`),

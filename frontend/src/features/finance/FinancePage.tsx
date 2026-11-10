@@ -74,9 +74,12 @@ export function FinancePage() {
     queryKey: ["finance", "transactions", filters],
     queryFn: () => financeApi.listTransactions(filters),
   });
+  // The chart shows the 12 months ending with the picked month, so the month
+  // must be part of the query key or the cached window never changes.
+  const monthIso = iso(month);
   const totalsQ = useQuery({
-    queryKey: ["finance", "monthly-totals"],
-    queryFn: () => financeApi.monthlyTotals(),
+    queryKey: ["finance", "monthly-totals", monthIso, CHART_MONTHS],
+    queryFn: () => financeApi.monthlyTotals(monthIso, CHART_MONTHS),
   });
 
   const monthTotals = useMemo(
@@ -119,51 +122,53 @@ export function FinancePage() {
         </Group>
         <Group>
           <Badge color="teal" size="lg">
-            Income: {monthTotals.income.toFixed(2)}
+            {t("finance.totals.income", { value: monthTotals.income.toFixed(2) })}
           </Badge>
           <Badge color="red" size="lg">
-            Expense: {monthTotals.expense.toFixed(2)}
+            {t("finance.totals.expense", { value: monthTotals.expense.toFixed(2) })}
           </Badge>
           <Badge color="gray" size="lg">
-            Net: {(monthTotals.income - monthTotals.expense).toFixed(2)}
+            {t("finance.totals.net", {
+              value: (monthTotals.income - monthTotals.expense).toFixed(2),
+            })}
           </Badge>
           <Button leftSection={<IconPlus size={16} />} onClick={openNew}>
-            Add transaction
+            {t("finance.tx.add")}
           </Button>
         </Group>
       </Group>
 
       {categoriesQ.isError && <Alert color="red">{t("common.noAccess")}</Alert>}
 
-      <MonthlyChart totals={totalsQ.data ?? []} />
+      <MonthlyChart totals={totalsQ.data ?? []} endMonth={month} months={CHART_MONTHS} />
 
       <Paper withBorder p="md">
         <Group gap="xs" wrap="wrap" mb="sm">
           <TextInput
-            placeholder="Search name / notes"
+            placeholder={t("finance.search.text")}
             value={search.q}
             onChange={(e) => setSearch({ ...search, q: e.currentTarget.value })}
             w={240}
           />
           <NumberInput
-            placeholder="Min"
+            placeholder={t("finance.search.min")}
             value={search.amount_min ? Number(search.amount_min) : undefined}
             onChange={(v) => setSearch({ ...search, amount_min: v ? String(v) : undefined })}
             w={120}
             min={0}
           />
           <NumberInput
-            placeholder="Max"
+            placeholder={t("finance.search.max")}
             value={search.amount_max ? Number(search.amount_max) : undefined}
             onChange={(v) => setSearch({ ...search, amount_max: v ? String(v) : undefined })}
             w={120}
             min={0}
           />
           <MultiSelect
-            placeholder="Category"
+            placeholder={t("finance.search.category")}
             data={(categoriesQ.data ?? []).map((c) => ({
               value: c.id,
-              label: `${c.name} (${c.kind})`,
+              label: `${c.name} (${t(`finance.kind.${c.kind}`)})`,
             }))}
             value={search.category_ids}
             onChange={(ids) => setSearch({ ...search, category_ids: ids })}
@@ -176,10 +181,10 @@ export function FinancePage() {
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>Date</Table.Th>
-              <Table.Th>Name</Table.Th>
-              <Table.Th>Category</Table.Th>
-              <Table.Th ta="right">Amount</Table.Th>
+              <Table.Th>{t("finance.field.date")}</Table.Th>
+              <Table.Th>{t("finance.field.name")}</Table.Th>
+              <Table.Th>{t("finance.field.category")}</Table.Th>
+              <Table.Th ta="right">{t("finance.field.amount")}</Table.Th>
               <Table.Th />
             </Table.Tr>
           </Table.Thead>
@@ -196,17 +201,17 @@ export function FinancePage() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap={4} justify="flex-end" wrap="nowrap">
-                      <Tooltip label="Edit">
+                      <Tooltip label={t("finance.action.edit")}>
                         <ActionIcon variant="subtle" onClick={() => openEdit(tx)}>
                           <IconPencil size={16} />
                         </ActionIcon>
                       </Tooltip>
-                      <Tooltip label="Duplicate (today's date)">
+                      <Tooltip label={t("finance.action.duplicate")}>
                         <ActionIcon variant="subtle" onClick={() => openDuplicate(tx)}>
                           <IconCopy size={16} />
                         </ActionIcon>
                       </Tooltip>
-                      <Tooltip label="Delete">
+                      <Tooltip label={t("finance.action.delete")}>
                         <ActionIcon variant="subtle" color="red" onClick={() => del.mutate(tx.id)}>
                           <IconTrash size={16} />
                         </ActionIcon>
@@ -219,7 +224,7 @@ export function FinancePage() {
             {!transactionsQ.isLoading && !(transactionsQ.data ?? []).length && (
               <Table.Tr>
                 <Table.Td colSpan={5} ta="center" c="dimmed" py="md">
-                  No transactions in this month.
+                  {t("finance.tx.empty")}
                 </Table.Td>
               </Table.Tr>
             )}
@@ -239,6 +244,8 @@ export function FinancePage() {
 }
 
 // ---- helpers ----
+
+const CHART_MONTHS = 12;
 
 function firstOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1);

@@ -240,8 +240,11 @@ def delete_transaction(request: HttpRequest, tx_id: UUID) -> dict[str, bool]:
 
 
 @router.get("/monthly-totals", response=list[MonthlySumOut])
-def monthly_totals(request: HttpRequest) -> list[selectors.MonthlySum]:
-    return selectors.monthly_totals(get_ctx(request))
+def monthly_totals(
+    request: HttpRequest, until: date | None = None, months: int = 12
+) -> list[selectors.MonthlySum]:
+    """Chart data: the ``months`` months ending with ``until``'s month."""
+    return selectors.monthly_totals(get_ctx(request), until=until, months=months)
 
 
 # -------------------- Recurring --------------------

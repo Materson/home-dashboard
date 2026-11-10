@@ -24,6 +24,7 @@ import {
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import { financeApi, type Category, type Transaction } from "./api";
 
@@ -40,6 +41,7 @@ export function TransactionModal(props: {
 }) {
   const { opened, onClose, categories, mode, source } = props;
   const qc = useQueryClient();
+  const { t } = useTranslation();
 
   const categoriesById = useMemo(() => {
     const m: Record<string, Category> = {};
@@ -94,8 +96,9 @@ export function TransactionModal(props: {
     },
   });
 
-  const title =
-    mode === "edit" ? "Edit transaction" : mode === "duplicate" ? "Duplicate transaction" : "Add transaction";
+  const title = t(
+    mode === "edit" ? "finance.tx.edit" : mode === "duplicate" ? "finance.tx.duplicate" : "finance.tx.add",
+  );
   const saving = create.isPending || update.isPending;
   const isRecurring = mode === "edit" && !!source?.recurring_rule_id;
 
@@ -108,13 +111,13 @@ export function TransactionModal(props: {
     return (
       <Stack mt="md">
         <TextInput
-          label="Name"
+          label={t("finance.field.name")}
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.currentTarget.value })}
           required
         />
         <NumberInput
-          label="Amount"
+          label={t("finance.field.amount")}
           decimalScale={2}
           fixedDecimalScale
           value={Number(form.amount)}
@@ -122,23 +125,21 @@ export function TransactionModal(props: {
           min={0}
         />
         <TextInput
-          label="Currency"
+          label={t("finance.field.currency")}
           value={form.currency}
           onChange={(e) => setForm({ ...form, currency: e.currentTarget.value.toUpperCase() })}
           maxLength={3}
         />
         <DatePickerInput
-          label="Date"
+          label={t("finance.field.date")}
           value={new Date(form.date)}
           onChange={(d) => setForm({ ...form, date: (d ?? new Date()).toISOString().slice(0, 10) })}
         />
         <Select
-          label="Category"
-          placeholder={
-            categoriesForKind.length
-              ? "Pick one"
-              : `No ${kind} categories yet — add one under Settings`
-          }
+          label={t("finance.field.category")}
+          placeholder={t(
+            categoriesForKind.length ? "finance.field.categoryPick" : "finance.field.categoryNone",
+          )}
           data={categoriesForKind.map((c) => ({ value: c.id, label: c.name }))}
           value={form.category_id}
           onChange={(v) => setForm({ ...form, category_id: v ?? "" })}
@@ -147,19 +148,19 @@ export function TransactionModal(props: {
           disabled={!categoriesForKind.length}
         />
         <TextInput
-          label="Notes"
+          label={t("finance.field.notes")}
           value={form.notes}
           onChange={(e) => setForm({ ...form, notes: e.currentTarget.value })}
         />
         {isRecurring && (
           <Checkbox
-            label="Apply changes to future occurrences too"
+            label={t("finance.recurring.applyFuture")}
             checked={applyToFuture}
             onChange={(e) => setApplyToFuture(e.currentTarget.checked)}
           />
         )}
         <Button onClick={save} loading={saving} disabled={!form.category_id || !form.name}>
-          {mode === "edit" ? "Save changes" : "Save"}
+          {t(mode === "edit" ? "finance.action.saveChanges" : "finance.action.save")}
         </Button>
       </Stack>
     );
@@ -170,13 +171,13 @@ export function TransactionModal(props: {
       <Tabs value={kind} onChange={(v) => v && switchKind(v as TxKind)} keepMounted={false}>
         <Tabs.List grow>
           <Tabs.Tab value="expense" color="red">
-            Expense
+            {t("finance.kind.expense")}
           </Tabs.Tab>
           <Tabs.Tab value="income" color="teal">
-            Income
+            {t("finance.kind.income")}
           </Tabs.Tab>
           <Tabs.Tab value="transfer" color="gray">
-            Transfer
+            {t("finance.kind.transfer")}
           </Tabs.Tab>
         </Tabs.List>
 
