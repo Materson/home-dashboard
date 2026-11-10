@@ -3,6 +3,7 @@
 These are the backbone of the whole app: every module × level × person-scope
 combination that matters should have a row here. REST endpoints and AI tools
 both go through the same context, so a passing row here also protects both."""
+
 from __future__ import annotations
 
 import pytest
@@ -63,3 +64,42 @@ def test_admin_user_has_everything():
     assert ctx.is_admin
     assert ctx.has("finance", "manage")
     assert ctx.has("health", "manage")
+
+
+def _kid_with_person():
+    user = UserFactory()
+    me = PersonFactory(user=user)
+    return user, me
+
+
+def test_edit_self_does_not_inherit_view_everyone():
+    """Regression: person sets were merged across levels, so "view everyone"
+    + "edit self" let the user edit everyone."""
+    user, me = _kid_with_person()
+    sibling = PersonFactory()
+    AccessGrantFactory(user=user, module="people", level="view", subjects=AccessGrant.Subjects.ALL)
+    AccessGrantFactory(user=user, module="people", level="edit", subjects=AccessGrant.Subjects.SELF)
+    ctx = AccessContext.for_user(user)
+
+    assert ctx.scopes["people"].persons_for("view") is None  # sees everyone
+    assert ctx.scopes["people"].persons_for("edit") == {me.id}  # edits only self
+    assert sibling.id not in (ctx.scopes["people"].persons_for("edit") or set())
+
+
+def test_higher_grant_covers_lower_levels():
+    user, me = _kid_with_person()
+    AccessGrantFactory(user=user, module="health", level="edit", subjects=AccessGrant.Subjects.SELF)
+    scope = AccessContext.for_user(user).scopes["health"]
+    assert scope.persons_for("view") == {me.id}
+    assert scope.persons_for("manage") == set()
+
+
+@pytest.mark.parametrize("first", ["self", "all"])
+def test_everyone_grant_wins_regardless_of_order(first):
+    """Regression: the merge depended on grant order (everyone-then-self
+    narrowed to self)."""
+    user, _me = _kid_with_person()
+    subjects = ["self", "all"] if first == "self" else ["all", "self"]
+    for s in subjects:
+        AccessGrantFactory(user=user, module="health", level="view", subjects=s)
+    assert AccessContext.for_user(user).scopes["health"].persons_for("view") is None

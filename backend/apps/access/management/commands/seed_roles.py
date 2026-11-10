@@ -29,7 +29,7 @@ ROLES: dict[str, list[tuple[str, str, str, str]]] = {
         ("calendar", "edit", "allow", "all"),
         ("notes", "edit", "allow", "all"),
         ("assistant", "edit", "allow", "all"),
-        ("people", "view", "allow", "all"),
+        ("people", "manage", "allow", "all"),  # add / edit / archive family members
     ],
     "Child": [
         ("health", "view", "allow", "self"),

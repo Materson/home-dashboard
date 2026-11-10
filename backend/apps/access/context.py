@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.core.exceptions import PermissionDenied
@@ -34,9 +34,23 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class Scope:
     allowed_level: str | None = None  # highest ALLOW level, after DENYs
-    person_ids: set[UUID] | None = None  # None = all; empty set = none
+    # Which people each level covers: None = everyone, empty set = nobody.
+    # A grant at a higher level also covers the lower ones (edit ⇒ view), but
+    # never the other way: "view everyone" + "edit self" edits only self.
+    persons_by_level: dict[str, set[UUID] | None] = field(default_factory=dict)
     data_from: date | None = None
     data_to: date | None = None
+
+    def persons_for(self, level: str) -> set[UUID] | None:
+        return self.persons_by_level.get(level, set())
+
+    @property
+    def person_ids(self) -> set[UUID] | None:
+        """People visible at all (the view level)."""
+        return self.persons_for("view")
+
+
+EVERYONE: dict[str, set[UUID] | None] = dict.fromkeys(LEVELS)
 
 
 @dataclass(slots=True)
@@ -49,14 +63,14 @@ class AccessContext:
     # ---- factories -----------------------------------------------------
 
     @classmethod
-    def for_user(cls, user: "User") -> "AccessContext":
+    def for_user(cls, user: User) -> AccessContext:
         if not user.is_authenticated:
             return cls(user_id=None, person_id=None, is_admin=False)
         person_id = getattr(getattr(user, "person", None), "id", None)
         ctx = cls(user_id=user.id, person_id=person_id, is_admin=bool(user.is_superuser))
         if ctx.is_admin:
             for m in MODULES:
-                ctx.scopes[m] = Scope(allowed_level="manage", person_ids=None)
+                ctx.scopes[m] = Scope(allowed_level="manage", persons_by_level=dict(EVERYONE))
             return ctx
         ctx._load_from_db()
         return ctx
@@ -78,35 +92,27 @@ class AccessContext:
             self.scopes[module] = self._merge_grants([g for g in grants if g.module == module])
 
     def _merge_grants(self, grants: list[AccessGrant]) -> Scope:
-        allow_levels: set[str] = set()
-        deny_levels: set[str] = set()
-        allowed_persons: set[UUID] | None = None  # None = any; set = constrained to this
-        has_allow = False
-        data_from: date | None = None
-        data_to: date | None = None
-        for g in grants:
-            if g.effect == AccessGrant.Effect.DENY:
-                deny_levels.add(g.level)
-                continue
-            allow_levels.add(g.level)
-            has_allow = True
-            persons = self._grant_person_set(g)
-            if persons is None:
-                # unconstrained: widens the scope
-                allowed_persons = None if allowed_persons is None else allowed_persons
-            else:
-                allowed_persons = (
-                    persons if allowed_persons is None else (allowed_persons | persons)
-                )
-            if g.data_from and (data_from is None or g.data_from < data_from):
-                data_from = g.data_from
-            if g.data_to and (data_to is None or g.data_to > data_to):
-                data_to = g.data_to
-        effective = allow_levels - deny_levels
+        allows = [g for g in grants if g.effect != AccessGrant.Effect.DENY]
+        deny_levels = {g.level for g in grants if g.effect == AccessGrant.Effect.DENY}
+        effective = {g.level for g in allows} - deny_levels
         allowed_level = max(effective, key=LEVELS.index) if effective else None
+
+        persons_by_level: dict[str, set[UUID] | None] = {}
+        for level in LEVELS:
+            covering = [g for g in allows if level_at_least(g.level, level)]
+            sets = [self._grant_person_set(g) for g in covering]
+            if not covering:
+                persons_by_level[level] = set()
+            elif any(p is None for p in sets):  # any "everyone" grant wins, in any order
+                persons_by_level[level] = None
+            else:
+                persons_by_level[level] = set().union(*sets)
+
+        data_from = min((g.data_from for g in allows if g.data_from), default=None)
+        data_to = max((g.data_to for g in allows if g.data_to), default=None)
         return Scope(
             allowed_level=allowed_level,
-            person_ids=allowed_persons if has_allow else set(),
+            persons_by_level=persons_by_level,
             data_from=data_from,
             data_to=data_to,
         )
@@ -136,7 +142,7 @@ class AccessContext:
         )
         if person_field:
             pid = getattr(obj, person_field + "_id", None)
-            allowed = self.scopes[module].person_ids
+            allowed = self.scopes[module].persons_for(level)
             if allowed is not None and (pid is None or pid not in allowed):
                 raise PermissionDenied(f"{module}:{level} denied for this person")
         # Date windows ("health data from 2024 on") apply to single objects too.
@@ -163,10 +169,11 @@ class AccessContext:
         if not self.has(module, level):
             return qs.none()
         s = self.scopes[module]
-        if s.person_ids is not None:
-            if not s.person_ids:
+        persons = s.persons_for(level)
+        if persons is not None:
+            if not persons:
                 return qs.none()
-            qs = qs.filter(**{f"{person_field}__in": s.person_ids})
+            qs = qs.filter(**{f"{person_field}__in": persons})
         if date_field:
             if s.data_from:
                 qs = qs.filter(**{f"{date_field}__gte": s.data_from})
