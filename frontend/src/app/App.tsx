@@ -7,6 +7,7 @@ import { FinancePage } from "@/features/finance/FinancePage";
 import { LoansPage } from "@/features/finance/LoansPage";
 import { DebtsPage } from "@/features/finance/DebtsPage";
 import { CarsPage } from "@/features/cars/CarsPage";
+import { HealthPage } from "@/features/health/HealthPage";
 import { Loading } from "@/components/Loading";
 
 export function App() {
@@ -30,6 +31,7 @@ export function App() {
         <Route path="/finance/loans" element={<LoansPage />} />
         <Route path="/finance/debts" element={<DebtsPage />} />
         <Route path="/cars" element={<CarsPage />} />
+        <Route path="/health" element={<HealthPage />} />
         <Route path="/auth/*" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
