@@ -1,4 +1,4 @@
-import createClient from "openapi-fetch";
+import createClient, { type Middleware } from "openapi-fetch";
 import type { paths } from "./schema";
 
 // CSRF is required by Django; allauth headless + Ninja both expect the
@@ -8,15 +8,15 @@ function getCookie(name: string): string {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
-export const api = createClient<paths>({
-  baseUrl: "/api",
-  credentials: "include",
-  fetch: async (input, init) => {
-    const csrftoken = getCookie("csrftoken");
-    const method = (init?.method ?? "GET").toUpperCase();
-    const unsafe = !["GET", "HEAD", "OPTIONS", "TRACE"].includes(method);
-    const headers = new Headers(init?.headers);
-    if (unsafe && csrftoken) headers.set("X-CSRFToken", csrftoken);
-    return fetch(input as Request, { ...init, headers });
+const csrf: Middleware = {
+  onRequest({ request }) {
+    const unsafe = !["GET", "HEAD", "OPTIONS", "TRACE"].includes(request.method.toUpperCase());
+    const token = getCookie("csrftoken");
+    if (unsafe && token) request.headers.set("X-CSRFToken", token);
+    return request;
   },
-});
+};
+
+// The generated `paths` already start with `/api/…`, so no baseUrl prefix.
+export const api = createClient<paths>({ baseUrl: "", credentials: "include" });
+api.use(csrf);
