@@ -23,11 +23,15 @@ import {
   TextInput,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 
+import { cabinetApi } from "@/features/health/api";
+
 import { financeApi, type Category, type Transaction } from "./api";
+
+const MEDICINE_KIND = "health.cabinetitem";
 
 export type TxModalMode = "new" | "edit" | "duplicate" | "bookmark";
 export type TxModalSource = Transaction | null;
@@ -71,6 +75,16 @@ export function TransactionModal(props: {
     setApplyToFuture(false);
   }, [opened, mode, source, categoriesById]);
 
+  // Health purchases (e.g. medicines bought at the pharmacy) can be linked to
+  // a cabinet medicine, so the medicine shows what was paid for it.
+  const isHealthCategory = !!categoriesById[form.category_id]?.key.startsWith("health");
+  const cabinet = useQuery({
+    queryKey: ["cabinet", "", "all", false],
+    queryFn: () => cabinetApi.list("", "all", false),
+    enabled: opened && isHealthCategory,
+  });
+  const medicines = (cabinet.data ?? []).map((i) => ({ value: i.id, label: i.name }));
+
   const categoriesForKind = useMemo(
     () => categories.filter((c) => c.kind === kind),
     [categories, kind],
@@ -85,6 +99,7 @@ export function TransactionModal(props: {
     mutationFn: () => financeApi.createTransaction(form),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["finance"] });
+      qc.invalidateQueries({ queryKey: ["cabinet"] });
       onClose();
     },
   });
@@ -146,6 +161,20 @@ export function TransactionModal(props: {
           required
           disabled={!categoriesForKind.length}
         />
+        {isHealthCategory && medicines.length > 0 && (
+          <Select
+            label={t("finance.field.medicine")}
+            description={t("finance.field.medicineHint")}
+            placeholder={t("finance.field.medicinePick")}
+            data={medicines}
+            value={form.related_kind === MEDICINE_KIND ? form.related_id : null}
+            onChange={(v) =>
+              setForm({ ...form, related_kind: v ? MEDICINE_KIND : "", related_id: v })
+            }
+            searchable
+            clearable
+          />
+        )}
         <TextInput
           label={t("finance.field.notes")}
           value={form.notes}
@@ -200,6 +229,8 @@ function buildInitial(mode: TxModalMode, source: TxModalSource, _kind: TxKind) {
       person_id: null as string | null,
       name: "",
       notes: "",
+      related_kind: "",
+      related_id: null as string | null,
     };
   }
   return {
@@ -209,6 +240,8 @@ function buildInitial(mode: TxModalMode, source: TxModalSource, _kind: TxKind) {
     currency: source.currency,
     category_id: source.category_id,
     person_id: source.person_id,
+    related_kind: source.related_kind ?? "",
+    related_id: source.related_id ?? null,
     name: source.name,
     notes: source.notes,
   };

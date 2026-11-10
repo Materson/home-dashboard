@@ -21,11 +21,20 @@ const NAV: NavGroup[] = [
     ],
   },
   { to: "/cars", labelKey: "nav.cars", module: "cars" },
-  { to: "/health", labelKey: "nav.health", module: "health" },
+  {
+    to: "/health",
+    labelKey: "nav.health",
+    module: "health",
+    children: [
+      { to: "/health", labelKey: "nav.healthRecords", module: "health" },
+      { to: "/health/cabinet", labelKey: "nav.cabinet", module: "health" },
+    ],
+  },
   { to: "/household", labelKey: "nav.household", module: "household" },
   { to: "/calendar", labelKey: "nav.calendar", module: "calendar" },
   { to: "/notes", labelKey: "nav.notes", module: "notes" },
   { to: "/assistant", labelKey: "nav.assistant", module: "assistant" },
+  { to: "/people", labelKey: "nav.people", module: "people" },
   { to: "/settings", labelKey: "nav.settings", module: null },
 ];
 
@@ -55,6 +64,11 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
         {visible.map((item) => {
           const active =
             loc.pathname === item.to || (item.to !== "/" && loc.pathname.startsWith(item.to));
+          // "/health/<person>" belongs to "/health" (Historia zdrowia), "/health/cabinet"
+          // to Apteczka: the longest child path the URL sits under wins.
+          const activeChild = item.children
+            ?.filter((c) => loc.pathname === c.to || loc.pathname.startsWith(`${c.to}/`))
+            .sort((a, b) => b.to.length - a.to.length)[0]?.to;
           return (
             <NavLink
               key={item.to}
@@ -70,7 +84,7 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
                   component={Link}
                   to={child.to}
                   label={t(child.labelKey)}
-                  active={loc.pathname === child.to}
+                  active={child.to === activeChild}
                 />
               ))}
             </NavLink>

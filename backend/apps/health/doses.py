@@ -12,6 +12,7 @@ expiring token for exactly that dose and status.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, time, timedelta
 
 from django.core import signing
@@ -30,14 +31,20 @@ TOKEN_MAX_AGE = timedelta(days=3)
 CHANNELS = ("webpush", "email")
 
 
+_TIME_RE = re.compile(r"^(\d{1,2})(?:[:.](\d{2}))?$|^(\d{1,2})(\d{2})$")
+
+
 def parse_times(values: list[str]) -> list[time]:
-    """["08:00", "20:30"] → sorted unique times; invalid entries are rejected."""
+    """["8", "20:30", "0830"] → sorted unique 24h times (same leniency as the
+    form: H, HH, H:MM, H.MM, HMM, HHMM); anything else is rejected."""
     out = set()
     for v in values:
-        try:
-            out.add(time.fromisoformat(v.strip()[:5]))
-        except ValueError as exc:
-            raise ValueError(f"invalid time {v!r}, use HH:MM") from exc
+        m = _TIME_RE.match(v.strip())
+        groups = [g for g in (m.groups() if m else ()) if g is not None]
+        hour, minute = (int(groups[0]), int(groups[1]) if len(groups) > 1 else 0) if m else (99, 0)
+        if hour > 23 or minute > 59:  # noqa: PLR2004
+            raise ValueError(f"invalid time {v!r}, use HH:MM")
+        out.add(time(hour, minute))
     return sorted(out)
 
 

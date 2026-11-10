@@ -7,7 +7,11 @@ import { FinancePage } from "@/features/finance/FinancePage";
 import { LoansPage } from "@/features/finance/LoansPage";
 import { DebtsPage } from "@/features/finance/DebtsPage";
 import { CarsPage } from "@/features/cars/CarsPage";
-import { HealthPage } from "@/features/health/HealthPage";
+import { HealthChooserPage } from "@/features/health/HealthChooserPage";
+import { HealthPersonPage } from "@/features/health/HealthPersonPage";
+import { PeoplePage } from "@/features/people/PeoplePage";
+import { PersonPage } from "@/features/people/PersonPage";
+import { CabinetPage } from "@/features/health/CabinetPage";
 import { Loading } from "@/components/Loading";
 
 export function App() {
@@ -31,7 +35,11 @@ export function App() {
         <Route path="/finance/loans" element={<LoansPage />} />
         <Route path="/finance/debts" element={<DebtsPage />} />
         <Route path="/cars" element={<CarsPage />} />
-        <Route path="/health" element={<HealthPage />} />
+        <Route path="/health" element={<HealthChooserPage />} />
+        <Route path="/health/cabinet" element={<CabinetPage />} />
+        <Route path="/health/:personId" element={<HealthPersonPage />} />
+        <Route path="/people" element={<PeoplePage />} />
+        <Route path="/people/:personId" element={<PersonPage />} />
         <Route path="/auth/*" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

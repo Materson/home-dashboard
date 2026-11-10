@@ -1,9 +1,12 @@
 /** Add/edit form for one field-driven record (see `fields.ts`). */
-import { useEffect, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Autocomplete,
   Button,
   Checkbox,
+  ColorInput,
+  Group,
   Modal,
   NumberInput,
   Select,
@@ -12,26 +15,34 @@ import {
   Textarea,
   TextInput,
 } from "@mantine/core";
-import { DatePickerInput, DateTimePicker } from "@mantine/dates";
+import { DatePickerInput } from "@mantine/dates";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { AmountInput } from "@/components/AmountInput";
-import { isoDate, isoDateTime, parseIsoDate } from "@/lib/format";
+import { isoDate, parseIsoDate } from "@/lib/format";
 
 import {
   applyEdit,
+  applyFills,
   handTypedOnLoad,
   initialState,
   isValid,
-  parseTimes,
+  normalizeTime,
   toPayload,
   type Choices,
   type FieldDef,
+  type Fills,
   type FormState,
   type FormValue,
   type Row,
+  type Suggestions,
 } from "./fields";
+
+/** Renders extra form content from the current values; `set` changes a field. */
+export type FormExtra = (state: FormState, set: (name: string, value: FormValue) => void) => ReactNode;
+/** Extra content placed right under the named field, e.g. `{ dosage: calculator }`. */
+export type FormExtras = Record<string, FormExtra>;
 
 export function RecordFormModal(props: {
   fields: FieldDef[];
@@ -43,17 +54,26 @@ export function RecordFormModal(props: {
   onSaved?: () => void;
   titleKey: { add: string; edit: string };
   choices?: Choices;
+  suggestions?: Suggestions;
+  fills?: Fills;
+  /** Pre-set values for a new record. */
+  defaults?: FormState;
+  /** Extra content under a field (e.g. a dose calculator under Dosage); may set fields. */
+  extras?: FormExtras;
 }) {
   const { t } = useTranslation();
   const { fields } = props;
-  const [state, setState] = useState<FormState>(() => initialState(fields, props.record));
+  const [state, setState] = useState<FormState>(() =>
+    initialState(fields, props.record, props.defaults),
+  );
   const [handTyped, setHandTyped] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!props.opened) return;
-    const initial = initialState(fields, props.record);
+    const initial = initialState(fields, props.record, props.defaults);
     setState(initial);
     setHandTyped(handTypedOnLoad(fields, initial, !!props.record));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- defaults only matter on open
   }, [props.opened, props.record, fields]);
 
   const save = useMutation({
@@ -67,7 +87,7 @@ export function RecordFormModal(props: {
   const set = (name: string, value: FormValue) => {
     const result = applyEdit(fields, state, handTyped, name, value);
     setHandTyped(result.handTyped);
-    setState(result.state);
+    setState(applyFills(result.state, props.fills, name, value));
   };
 
   return (
@@ -78,13 +98,16 @@ export function RecordFormModal(props: {
     >
       <Stack>
         {fields.map((f) => (
-          <Field
-            key={f.name}
-            def={f}
-            value={state[f.name]}
-            choices={props.choices?.[f.name]}
-            onChange={(v) => set(f.name, v)}
-          />
+          <Fragment key={f.name}>
+            <Field
+              def={f}
+              value={state[f.name]}
+              choices={props.choices?.[f.name]}
+              suggestions={props.suggestions?.[f.suggestKey ?? f.name]}
+              onChange={(v) => set(f.name, v)}
+            />
+            {props.extras?.[f.name]?.(state, set)}
+          </Fragment>
         ))}
         {save.isError && <Alert color="red">{t("common.saveFailed")}</Alert>}
         <Button
@@ -103,11 +126,13 @@ function Field({
   def,
   value,
   choices,
+  suggestions,
   onChange,
 }: {
   def: FieldDef;
   value: FormValue;
   choices?: { value: string; label: string }[];
+  suggestions?: string[];
   onChange: (v: FormValue) => void;
 }) {
   const { t } = useTranslation();
@@ -126,15 +151,29 @@ function Field({
           onChange={(d) => onChange(d ? isoDate(d) : "")}
         />
       );
-    case "datetime":
+    case "datetime": {
+      // A date picker + our own 24h time field. Mantine's DateTimePicker uses
+      // the browser's time input (12h/24h follows the OS, and its changes
+      // were not always reported), so the time could stay at 00:00.
+      const [datePart = "", timePart = ""] = String(value).split("T");
+      const join = (d: string, t: string) => (d || t ? `${d}T${t}` : "");
       return (
-        <DateTimePicker
-          {...common}
-          clearable={!def.required}
-          value={value ? new Date(String(value)) : null}
-          onChange={(d) => onChange(d ? isoDateTime(d) : "")}
-        />
+        <Group grow align="flex-start">
+          <DatePickerInput
+            {...common}
+            clearable={!def.required}
+            value={datePart ? parseIsoDate(datePart) : null}
+            onChange={(d) => onChange(join(d ? isoDate(d) : "", timePart))}
+          />
+          <TimeField
+            label={t("common.time")}
+            required={def.required}
+            value={timePart}
+            onChange={(tm) => onChange(join(datePart, tm))}
+          />
+        </Group>
       );
+    }
     case "int":
       return (
         <NumberInput
@@ -187,6 +226,16 @@ function Field({
           onChange={(v) => onChange(v ?? "")}
         />
       );
+    case "color":
+      return (
+        <ColorInput
+          {...common}
+          format="hex"
+          swatches={["#4c6ef5", "#e64980", "#12b886", "#fab005", "#fd7e14", "#7950f2", "#868e96"]}
+          value={String(value)}
+          onChange={onChange}
+        />
+      );
     case "times":
       return (
         <TagsInput
@@ -194,10 +243,13 @@ function Field({
           placeholder="08:00"
           splitChars={[",", " "]}
           value={String(value) ? String(value).split(/[,\s]+/).filter(Boolean) : []}
-          onChange={(tags) => onChange(tags.join(", "))}
+          // "8" or "830" become "08:00" / "08:30" as soon as they're added.
+          onChange={(tags) => onChange(tags.map((tag) => normalizeTime(tag) ?? tag).join(", "))}
           error={
-            String(value).trim() &&
-            parseTimes(value).length !== String(value).split(/[,\s]+/).filter(Boolean).length
+            String(value)
+              .split(/[,\s]+/)
+              .filter(Boolean)
+              .some((tag) => normalizeTime(tag) === null)
               ? t("common.badTime")
               : undefined
           }
@@ -214,8 +266,67 @@ function Field({
         />
       );
     default:
+      if (suggestions?.length) {
+        // Free text, with earlier values offered as you type (or on focus).
+        return (
+          <Autocomplete
+            {...common}
+            data={suggestions}
+            limit={8}
+            value={String(value)}
+            onChange={onChange}
+          />
+        );
+      }
       return (
         <TextInput {...common} value={String(value)} onChange={(e) => onChange(e.currentTarget.value)} />
       );
   }
+}
+
+/**
+ * 24-hour time entry. Free typing ("8", "830", "14.30") is tidied to "HH:MM"
+ * on blur; until then an unparseable value keeps the form unsaveable.
+ */
+function TimeField(props: {
+  label: string;
+  required?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [text, setText] = useState(props.value);
+  // What we last sent up. The form stores the tidied "01:00" while the user
+  // has typed only "1" — that echo must not overwrite what they're typing.
+  const lastEmitted = useRef(props.value);
+  useEffect(() => {
+    if (props.value !== lastEmitted.current) {
+      lastEmitted.current = props.value;
+      setText(props.value);
+    }
+  }, [props.value]);
+  const invalid = text.trim() !== "" && normalizeTime(text) === null;
+  return (
+    <TextInput
+      label={props.label}
+      required={props.required}
+      placeholder="14:30"
+      maxLength={5}
+      inputMode="numeric"
+      value={text}
+      error={invalid ? t("common.badTime") : undefined}
+      onChange={(e) => {
+        const raw = e.currentTarget.value;
+        setText(raw);
+        const next = normalizeTime(raw) ?? raw;
+        lastEmitted.current = next;
+        props.onChange(next);
+      }}
+      onBlur={() => {
+        const tidy = normalizeTime(text);
+        if (tidy) setText(tidy);
+      }}
+      onFocus={(e) => e.currentTarget.select()}
+    />
+  );
 }

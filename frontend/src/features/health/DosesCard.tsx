@@ -9,12 +9,12 @@ import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
-import { fmtDate, isoDate } from "@/lib/format";
+import { fmtDate, fmtTime, isoDate } from "@/lib/format";
 
 import { healthApi, type Dose, type DoseStatus } from "./api";
 
 export function DosesCard({ personId }: { personId: string }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const qc = useQueryClient();
   const [day, setDay] = useState(() => new Date());
   const dayIso = isoDate(day);
@@ -30,8 +30,7 @@ export function DosesCard({ personId }: { personId: string }) {
   });
 
   const shift = (n: number) => setDay((d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
-  const time = (d: Dose) =>
-    new Date(d.scheduled_at).toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit" });
+  const time = (d: Dose) => fmtTime(d.scheduled_at);
 
   return (
     <Paper withBorder p="md">

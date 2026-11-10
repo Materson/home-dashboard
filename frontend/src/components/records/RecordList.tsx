@@ -18,8 +18,16 @@ import { IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
 import { type QueryKey, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
-import { display, isNumeric, type Choices, type FieldDef, type Row } from "./fields";
-import { RecordFormModal } from "./RecordFormModal";
+import {
+  display,
+  isNumeric,
+  type Choices,
+  type FieldDef,
+  type Fills,
+  type Row,
+  type Suggestions,
+} from "./fields";
+import { type FormExtras, RecordFormModal } from "./RecordFormModal";
 
 export type ExtraColumn = { headerKey: string; numeric?: boolean; render: (r: Row) => ReactNode };
 
@@ -32,11 +40,21 @@ export function RecordList(props: {
   /** Query keys to refresh after a change (the list's own key is always refreshed). */
   invalidate?: QueryKey[];
   choices?: Choices;
+  suggestions?: Suggestions;
+  fills?: Fills;
+  /** Pre-set values for new records. */
+  defaults?: Record<string, string | boolean>;
+  /** Clicking a row (not its buttons) — e.g. open a detail view. */
+  onRowClick?: (r: Row) => void;
   extraColumns?: ExtraColumn[];
   /** Extra buttons before edit/delete in each row. */
   rowActions?: (r: Row) => ReactNode;
   labels: { add: string; edit: string; empty: string; deleteConfirm: string };
   readOnly?: boolean;
+  /** Column fields not shown here (e.g. the event, inside that event's window). */
+  hiddenColumns?: string[];
+  /** Extra content under fields of the add/edit form. */
+  formExtras?: FormExtras;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -49,7 +67,8 @@ export function RecordList(props: {
   };
   const remove = useMutation({ mutationFn: props.remove, onSuccess: refresh });
 
-  const columns = props.fields.filter((f) => f.column);
+  const hidden = props.hiddenColumns ?? [];
+  const columns = props.fields.filter((f) => (f.column || f.truncate) && !hidden.includes(f.name));
   const extra = props.extraColumns ?? [];
 
   return (
@@ -80,10 +99,14 @@ export function RecordList(props: {
           </Table.Thead>
           <Table.Tbody>
             {(rows.data ?? []).map((r) => (
-              <Table.Tr key={r.id}>
+              <Table.Tr
+                key={r.id}
+                onClick={props.onRowClick ? () => props.onRowClick?.(r) : undefined}
+                style={props.onRowClick ? { cursor: "pointer" } : undefined}
+              >
                 {columns.map((f) => (
                   <Table.Td key={f.name} ta={isNumeric(f) ? "right" : undefined}>
-                    {display(f, r, t, props.choices)}
+                    <Cell text={display(f, r, t, props.choices)} max={f.truncate} />
                   </Table.Td>
                 ))}
                 {extra.map((c) => (
@@ -91,7 +114,7 @@ export function RecordList(props: {
                     {c.render(r)}
                   </Table.Td>
                 ))}
-                <Table.Td>
+                <Table.Td onClick={(e) => e.stopPropagation()}>
                   <Group gap={4} justify="flex-end" wrap="nowrap">
                     {props.rowActions?.(r)}
                     {!props.readOnly && (
@@ -146,7 +169,30 @@ export function RecordList(props: {
         onSaved={refresh}
         titleKey={{ add: props.labels.add, edit: props.labels.edit }}
         choices={props.choices}
+        suggestions={props.suggestions}
+        fills={props.fills}
+        defaults={props.defaults}
+        extras={props.formExtras}
       />
     </Stack>
+  );
+}
+
+/** Long text cut to `max` characters; hovering shows all of it. */
+function Cell({ text, max }: { text: string; max?: number }) {
+  if (!max || text.length <= max) return <>{text}</>;
+  return (
+    <Tooltip
+      label={text}
+      multiline
+      w={320}
+      withArrow
+      openDelay={150}
+      style={{ whiteSpace: "pre-wrap" }}
+    >
+      <Text span size="sm" style={{ cursor: "help" }}>
+        {text.slice(0, max).trimEnd()}…
+      </Text>
+    </Tooltip>
   );
 }

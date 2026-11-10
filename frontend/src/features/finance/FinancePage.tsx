@@ -118,7 +118,15 @@ export function FinancePage() {
   function openFromBookmark(b: Bookmark) {
     setModalMode("bookmark");
     // The modal only reads the transaction fields a bookmark also has.
-    setModalSource({ ...b, id: "", date: "", recurring_rule_id: null, source_id: null });
+    setModalSource({
+      ...b,
+      id: "",
+      date: "",
+      recurring_rule_id: null,
+      source_id: null,
+      related_kind: "",
+      related_id: null,
+    });
     setModalOpen(true);
   }
 

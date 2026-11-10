@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -13,9 +13,9 @@ from django.utils import timezone
 
 from apps.access.context import AccessContext
 from apps.access.models import AccessGrant
-from apps.finance.models import Transaction
+from apps.finance.models import Category
 from apps.health import doses, selectors, services
-from apps.health.models import DoseLog
+from apps.health.models import CabinetItem, DoseLog
 from apps.reminders.models import Reminder
 
 from .factories import AccessGrantFactory, GroupFactory, PersonFactory, UserFactory
@@ -110,23 +110,104 @@ def test_medication_cannot_link_another_persons_illness(family):
 # ---- ledger & appointment reminders -----------------------------------------
 
 
-def test_medicine_purchase_goes_to_finance_without_finance_access(family):
-    purchase = services.save_record(
+def test_treatment_uses_and_creates_cabinet_medicines(family):
+    """Typing a medicine name links the treatment to the cabinet (creating
+    the medicine if new); picking a cabinet item mirrors its name."""
+    med = medication(family["parent"], family["kid"])  # "Amoksycylina", not in cabinet yet
+    assert med.cabinet_item.name == "Amoksycylina"
+
+    again = services.save_record(
         family["parent"],
-        "purchases",
+        "medications",
+        {"person_id": family["mom"].id, "name": "amoksycylina", "start_date": timezone.localdate()},
+    )
+    assert again.cabinet_item_id == med.cabinet_item_id  # matched case-insensitively
+    assert CabinetItem.objects.count() == 1
+
+    nurofen = services.save_cabinet_item(family["parent"], {"name": "Nurofen"})
+    picked = services.save_record(
+        family["parent"],
+        "medications",
         {
             "person_id": family["kid"].id,
-            "date": date(2026, 3, 2),
-            "name": "Amoksycylina",
-            "cost": Decimal("32.50"),
+            "name": "",
+            "cabinet_item_id": nurofen.id,
+            "start_date": timezone.localdate(),
         },
     )
-    tx = Transaction.objects.get(source_id=purchase.id)
-    assert (tx.category.key, tx.amount, tx.person_id) == (
-        "health.medicines",
-        Decimal("32.50"),
-        family["kid"].id,
+    assert picked.name == "Nurofen"
+    assert [
+        t.id
+        for t in selectors.list_records(family["parent"], "medications", cabinet_item_id=nurofen.id)
+    ] == [picked.id]
+
+
+def test_event_hub_links_visits_and_treatments(family):
+    angina = condition(family["parent"], family["kid"], "Angina")
+    visit = services.save_record(
+        family["parent"],
+        "appointments",
+        {
+            "person_id": family["kid"].id,
+            "starts_at": timezone.localtime() + timedelta(days=1),
+            "condition_id": angina.id,
+        },
     )
+    med = services.save_record(
+        family["parent"],
+        "medications",
+        {
+            "person_id": family["kid"].id,
+            "name": "Amoksycylina",
+            "start_date": timezone.localdate(),
+            "condition_id": angina.id,
+        },
+    )
+    ctx = family["parent"]
+    assert list(selectors.list_records(ctx, "appointments", condition_id=angina.id)) == [visit]
+    assert list(selectors.list_records(ctx, "medications", condition_id=angina.id)) == [med]
+
+    moms_cold = condition(family["parent"], family["mom"], "Katar")
+    with pytest.raises(ValueError):  # a visit can't point at someone else's illness
+        services.save_record(ctx, "appointments", {"condition_id": moms_cold.id}, visit.id)
+
+
+def test_finance_purchase_can_be_linked_to_a_medicine(client, family):
+    nurofen = services.save_cabinet_item(family["parent"], {"name": "Nurofen"})
+    finance_user = UserFactory(is_superuser=True)
+    client.force_login(finance_user)
+    resp = client.post(
+        "/api/finance/transactions",
+        {
+            "date": "2026-03-02",
+            "amount": "24.90",
+            "category_id": str(Category.objects.get(key="health.medicines").id),
+            "name": "Apteka",
+            "related_kind": "health.cabinetitem",
+            "related_id": str(nurofen.id),
+        },
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, resp.content
+    (purchase,) = client.get(f"/api/health/cabinet/{nurofen.id}/purchases").json()
+    assert purchase["amount"] == "24.90"
+
+    # Without finance access the medicine still shows, its purchases don't.
+    assert selectors.cabinet_item_purchases(family["parent"], nurofen.id) == []
+
+    resp = client.post(
+        "/api/finance/transactions",
+        {
+            "date": "2026-03-02",
+            "amount": "1",
+            "category_id": str(Category.objects.get(key="health.medicines").id),
+            "name": "x",
+            "related_kind": "health.nothing",
+            "related_id": str(nurofen.id),
+        },
+        content_type="application/json",
+    )
+    assert resp.status_code == 422
 
 
 def test_appointment_reminders_are_generic_and_follow_status(family):
@@ -290,3 +371,148 @@ def test_result_file_upload_view_and_scoping(client, family, settings, tmp_path)
     stored = list(tmp_path.rglob("*.pdf"))
     services.delete_record(family["parent"], "results", result.id)
     assert len(list(tmp_path.rglob("*.pdf"))) == len(stored) - 1
+
+
+def test_dose_times_accept_single_digit_hours():
+    assert doses.parse_times(["20:00", "8", "8.30", "0830", "830"]) == [
+        time(8, 0),
+        time(8, 30),
+        time(20, 0),
+    ]
+    for bad in ("24:00", "8:60", "abc"):
+        with pytest.raises(ValueError):
+            doses.parse_times([bad])
+
+
+def test_appointment_suggestions_recent_first_and_scoped(family):
+    def visit(person, days_ago, **fields):
+        return services.save_record(
+            family["parent"],
+            "appointments",
+            {
+                "person_id": person.id,
+                "starts_at": timezone.localtime() - timedelta(days=days_ago),
+                "status": "done",
+                **fields,
+            },
+        )
+
+    visit(
+        family["kid"], 30, doctor="dr Nowak", specialty="Pediatra", place="Przychodnia A", room="12"
+    )
+    visit(
+        family["kid"], 5, doctor="dr Nowak", specialty="Pediatra", place="Przychodnia B", room="7"
+    )
+    visit(family["mom"], 10, doctor="dr Kowalska", specialty="Laryngolog", purpose="Kontrola")
+
+    s = selectors.appointment_suggestions(family["parent"])
+    assert s["place"] == ["Przychodnia B", "Przychodnia A"]  # most recent first, unique
+    assert s["doctor"] == ["dr Nowak", "dr Kowalska"]
+    nowak = next(d for d in s["doctors"] if d["doctor"] == "dr Nowak")
+    assert (nowak["place"], nowak["room"]) == ("Przychodnia B", "7")  # last visit wins
+
+    # The child only sees suggestions from their own visits.
+    assert selectors.appointment_suggestions(family["child"])["doctor"] == ["dr Nowak"]
+
+
+def test_health_profile_bmi_adults_only(family):
+    mom, kid = family["mom"], family["kid"]
+    mom.birth_date = date(1990, 1, 1)
+    mom.save()
+    kid.birth_date = date(2020, 1, 1)
+    kid.save()
+    for person, weight, height in ((mom, "68", "170"), (kid, "20", "115")):
+        services.save_record(
+            family["parent"],
+            "measurements",
+            {
+                "person_id": person.id,
+                "date": date(2026, 3, 1),
+                "weight_kg": weight,
+                "height_cm": height,
+            },
+        )
+
+    p = selectors.health_profile(family["parent"], mom.id, today=date(2026, 3, 2))
+    assert (p["bmi"], p["bmi_category"]) == (Decimal("23.5"), "normal")
+    k = selectors.health_profile(family["parent"], kid.id, today=date(2026, 3, 2))
+    assert k["bmi"] == Decimal("15.1") and k["bmi_category"] == "child"  # no adult label
+
+    assert selectors.bmi_category(Decimal("31"), 40 * 12) == "obese"
+    with pytest.raises(Http404):  # the child can't open mom's profile
+        selectors.health_profile(family["child"], mom.id)
+
+
+def symptom(ctx, event, name="gorączka", at=None, **extra):
+    data = {
+        "person_id": event.person_id,
+        "condition_id": event.id,
+        "observed_at": at or timezone.now(),
+        "symptom": name,
+        **extra,
+    }
+    return services.save_record(ctx, "symptoms", data)
+
+
+def test_symptoms_are_tracked_over_time_within_an_event(family):
+    flu = condition(family["parent"], family["kid"], title="Grypa")
+    morning = timezone.now() - timedelta(hours=10)
+    symptom(family["parent"], flu, "  gorączka ", at=morning, value="39,2 °C")
+    symptom(family["parent"], flu, "gorączka", value="37,8 °C")
+    symptom(family["parent"], flu, "kaszel")
+
+    entries = list(selectors.list_records(family["parent"], "symptoms", condition_id=flu.id))
+    assert [e.symptom for e in entries] == ["kaszel", "gorączka", "gorączka"]  # newest first
+    assert entries[-1].value == "39,2 °C"
+    # the kid's own view sees them too; another event's list does not
+    assert len(list(selectors.list_records(family["child"], "symptoms"))) == 3
+    other = condition(family["parent"], family["kid"], title="Uraz")
+    assert not selectors.list_records(family["parent"], "symptoms", condition_id=other.id).exists()
+
+
+def test_symptom_must_belong_to_the_same_persons_event(family):
+    moms_event = condition(family["parent"], family["mom"])
+    with pytest.raises(ValueError):
+        services.save_record(
+            family["parent"],
+            "symptoms",
+            {
+                "person_id": family["kid"].id,
+                "condition_id": moms_event.id,
+                "observed_at": timezone.now(),
+                "symptom": "kaszel",
+            },
+        )
+
+
+def test_child_cannot_see_or_add_symptoms_to_a_parents_event(family):
+    moms_event = condition(family["parent"], family["mom"])
+    symptom(family["parent"], moms_event)
+    assert not selectors.list_records(family["child"], "symptoms").exists()
+    with pytest.raises((PermissionDenied, Http404)):
+        symptom(family["child"], moms_event)
+
+
+def test_deleting_an_event_deletes_its_symptoms(family):
+    flu = condition(family["parent"], family["kid"])
+    symptom(family["parent"], flu)
+    services.delete_record(family["parent"], "conditions", flu.id)
+    assert not selectors.list_records(family["parent"], "symptoms").exists()
+
+
+def test_symptom_api_takes_local_time(client, family):
+    flu = condition(family["parent"], family["kid"])
+    client.force_login(family["mom"].user)
+    resp = client.post(
+        "/api/health/symptoms",
+        {
+            "person_id": str(family["kid"].id),
+            "condition_id": str(flu.id),
+            "observed_at": "2026-03-02T21:15",
+            "symptom": "gorączka",
+            "value": "38,5 °C",
+        },
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["observed_at"].startswith("2026-03-02T21:15")

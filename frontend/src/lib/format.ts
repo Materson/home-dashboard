@@ -41,6 +41,7 @@ export function fmtDateTime(value: string | null | undefined): string {
   return new Date(value).toLocaleString(i18n.language, {
     dateStyle: "short",
     timeStyle: "short",
+    hourCycle: "h23", // 24h in every language
   });
 }
 
@@ -48,4 +49,13 @@ export function fmtDateTime(value: string | null | undefined): string {
 export function isoDateTime(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${isoDate(d)}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** API datetime → "HH:MM", 24h in every language. */
+export function fmtTime(value: string): string {
+  return new Date(value).toLocaleTimeString(i18n.language, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
 }

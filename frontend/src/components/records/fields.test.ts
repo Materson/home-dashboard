@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { RECORDS } from "@/features/cars/records";
-import { handTypedOnLoad, isValid, parseTimes, toPayload, type FieldDef } from "./fields";
+import {
+  applyFills,
+  handTypedOnLoad,
+  isValid,
+  normalizeTime,
+  parseTimes,
+  toPayload,
+  type FieldDef,
+} from "./fields";
 
 describe("times fields", () => {
   const fields: FieldDef[] = [{ name: "dose_times", type: "times", labelKey: "x" }];
@@ -42,3 +50,59 @@ describe("editing a record with derived fields", () => {
     );
   });
 });
+
+describe("24h time entry", () => {
+  it("accepts the usual ways of typing a time", () => {
+    for (const [typed, tidy] of [
+      ["8", "08:00"],
+      ["8:00", "08:00"],
+      ["8.30", "08:30"],
+      ["830", "08:30"],
+      ["0830", "08:30"],
+      ["14:30", "14:30"],
+      ["2015", "20:15"],
+      ["0", "00:00"],
+    ]) {
+      expect(normalizeTime(typed)).toBe(tidy);
+    }
+  });
+
+  it("rejects non-times", () => {
+    for (const bad of ["24:00", "8:60", "abc", "8:5", "12345", ""]) {
+      expect(normalizeTime(bad)).toBeNull();
+    }
+  });
+
+  it("dose times keep working with single-digit hours", () => {
+    expect(parseTimes("20:00, 8")).toEqual(["08:00", "20:00"]);
+  });
+
+  it("date + time must both be filled in", () => {
+    const appt: FieldDef[] = [{ name: "starts_at", type: "datetime", labelKey: "x", required: true }];
+    expect(isValid(appt, { starts_at: "2026-03-10T" })).toBe(false);
+    expect(isValid(appt, { starts_at: "T14:30" })).toBe(false);
+    expect(isValid(appt, { starts_at: "2026-03-10T14:30" })).toBe(true);
+    expect(toPayload(appt, { starts_at: "2026-03-10T14:30" })).toEqual({ starts_at: "2026-03-10T14:30" });
+  });
+});
+
+describe("fill on pick", () => {
+  const fills = { doctor: { "dr nowak": { specialty: "Pediatra", place: "Przychodnia B", room: "7" } } };
+
+  it("fills only the fields that are still empty", () => {
+    const state = { doctor: "dr Nowak", specialty: "", place: "Inne miejsce", room: "" };
+    expect(applyFills(state, fills, "doctor", "dr Nowak")).toEqual({
+      doctor: "dr Nowak",
+      specialty: "Pediatra",
+      place: "Inne miejsce", // typed by the user: kept
+      room: "7",
+    });
+  });
+
+  it("does nothing for an unknown value", () => {
+    const state = { doctor: "dr Nowy", specialty: "" };
+    expect(applyFills(state, fills, "doctor", "dr Nowy")).toBe(state);
+  });
+});
+
+

@@ -16,8 +16,10 @@ class HealthConfig(AppConfig):
         for model in (
             models.Condition,
             models.Medication,
-            models.MedicinePurchase,
             models.Appointment,
             models.TestResult,
+            models.CabinetItem,
+            models.Measurement,
+            models.MedicinePackage,
         ):
             register_module_for(model, "health")

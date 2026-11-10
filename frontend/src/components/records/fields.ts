@@ -16,6 +16,7 @@ export type FieldType =
   | "bool"
   | "select" // fixed options, labels from i18n
   | "choice" // options supplied at runtime (e.g. a person's illnesses)
+  | "color" // "#rrggbb"
   | "times"; // list of "HH:MM" (dose times)
 
 export type FieldDef = {
@@ -28,6 +29,10 @@ export type FieldDef = {
   /** For "select": allowed values; labels come from `${optionsKey}.${value}`. */
   options?: string[];
   optionsKey?: string;
+  /** Key into the form's `suggestions` (default: the field name). */
+  suggestKey?: string;
+  /** Table cell shows at most this many characters; the full text on hover. */
+  truncate?: number;
   /** Default for a new record (required dates default to today, selects to the first option). */
   default?: string | boolean;
   /** Hint under the field. */
@@ -54,17 +59,55 @@ export type FormState = Record<string, FormValue>;
 export type Row = { id: string } & Record<string, unknown>;
 /** Runtime options for "choice" fields, keyed by field name. */
 export type Choices = Record<string, { value: string; label: string }[]>;
+/** Earlier values offered while typing in a "text" field, keyed by field name. */
+export type Suggestions = Record<string, string[]>;
+/**
+ * Picking a known value fills other *empty* fields, e.g. a doctor → their
+ * usual specialty and place: { doctor: { "dr nowak": { place: "…" } } }
+ * (value keys lower-cased).
+ */
+export type Fills = Record<string, Record<string, FormState>>;
 
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** Apply ``fills`` for ``name = value`` to the fields that are still empty. */
+export function applyFills(state: FormState, fills: Fills | undefined, name: string, value: FormValue): FormState {
+  const fill = typeof value === "string" ? fills?.[name]?.[value.trim().toLowerCase()] : undefined;
+  if (!fill) return state;
+  const next = { ...state };
+  for (const [k, v] of Object.entries(fill)) {
+    if (k !== name && (next[k] === "" || next[k] === undefined) && v) next[k] = v;
+  }
+  return next;
+}
 
-/** "08:00, 20:00" → ["08:00", "20:00"] (valid HH:MM only, sorted, unique). */
+/**
+ * Lenient 24h time → "HH:MM", or null when it isn't a time.
+ * Accepts "8", "08", "8:00", "8.30", "830", "0830", "20:15".
+ */
+export function normalizeTime(raw: string): string | null {
+  const s = raw.trim();
+  let m = /^(\d{1,2})(?:[:.](\d{2}))?$/.exec(s); // 8 · 8:00 · 08.30
+  if (!m) m = /^(\d{1,2})(\d{2})$/.exec(s); // 830 · 0830 · 2015
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2] ?? "0");
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+const tokens = (value: string) => value.split(/[,\s]+/).filter(Boolean);
+
+/** "20:00, 8" → ["08:00", "20:00"] (valid times only, sorted, unique). */
 export function parseTimes(value: FormValue | undefined): string[] {
   if (typeof value !== "string") return [];
-  const times = value
-    .split(/[,\s]+/)
-    .map((v) => v.trim())
-    .filter((v) => TIME_RE.test(v));
+  const times = tokens(value)
+    .map(normalizeTime)
+    .filter((v): v is string => v !== null);
   return [...new Set(times)].sort();
+}
+
+/** Complete local "YYYY-MM-DDTHH:MM" (a date+time field may hold only one half). */
+export function isCompleteDateTime(value: FormValue | undefined): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value);
 }
 
 export function isNumeric(f: FieldDef): boolean {
@@ -104,7 +147,13 @@ export function display(
   }
 }
 
-export function initialState(fields: FieldDef[], record: Row | null): FormState {
+/** ``defaults`` pre-set a *new* record's fields (e.g. the selected person, or
+ *  the event a visit is added from); field defaults apply after them. */
+export function initialState(
+  fields: FieldDef[],
+  record: Row | null,
+  defaults: FormState = {},
+): FormState {
   const state: FormState = {};
   for (const f of fields) {
     const v = record?.[f.name];
@@ -113,6 +162,8 @@ export function initialState(fields: FieldDef[], record: Row | null): FormState 
       else if (f.type === "times") state[f.name] = Array.isArray(v) ? v.join(", ") : "";
       else if (f.type === "datetime" && typeof v === "string") state[f.name] = v.slice(0, 16);
       else state[f.name] = v === null || v === undefined ? "" : String(v);
+    } else if (defaults[f.name] !== undefined) {
+      state[f.name] = defaults[f.name];
     } else if (f.default !== undefined) {
       state[f.name] = f.default;
     } else if (f.type === "date" && f.required) {
@@ -157,6 +208,7 @@ export function toPayload(fields: FieldDef[], state: FormState): Record<string, 
     const v = state[f.name];
     if (f.type === "bool") out[f.name] = Boolean(v);
     else if (f.type === "times") out[f.name] = parseTimes(v);
+    else if (f.type === "datetime") out[f.name] = isCompleteDateTime(v) ? v : null;
     else if (v === "" || v === undefined)
       out[f.name] = f.type === "text" || f.type === "textarea" ? "" : null;
     else if (f.type === "int") out[f.name] = Math.round(Number(v));
@@ -168,13 +220,17 @@ export function toPayload(fields: FieldDef[], state: FormState): Record<string, 
 export function isValid(fields: FieldDef[], state: FormState): boolean {
   return fields.every((f) => {
     const v = state[f.name];
+    if (f.type === "datetime" && typeof v === "string" && v && v !== "T" && !isCompleteDateTime(v)) {
+      return false; // only the date or only the time was entered
+    }
     if (f.type === "times" && typeof v === "string" && v.trim()) {
       // every entered token must be a valid time
-      return v.split(/[,\s]+/).filter(Boolean).every((tok) => TIME_RE.test(tok));
+      return tokens(v).every((tok) => normalizeTime(tok) !== null);
     }
     if (!f.required) return true;
     if (f.type === "amount") return isPositiveAmount(String(v));
     if (f.type === "times") return parseTimes(v).length > 0;
+    if (f.type === "datetime") return isCompleteDateTime(v);
     return v !== "" && v !== undefined;
   });
 }
