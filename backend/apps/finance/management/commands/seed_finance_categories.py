@@ -1,6 +1,9 @@
 """Seed the system categories other apps reference by key.
 
+Names are Polish (the household UI language); other apps only rely on the keys.
+
 Idempotent — safe to re-run after adding new keys."""
+
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand
@@ -9,22 +12,22 @@ from apps.finance.models import Category
 
 SYSTEM: list[tuple[str, str, str, str | None]] = [
     # (key, name, kind, parent_key)
-    ("car", "Car", "expense", None),
-    ("car.fuel", "Fuel", "expense", "car"),
-    ("car.maintenance", "Maintenance", "expense", "car"),
-    ("car.inspection", "Technical inspection", "expense", "car"),
-    ("car.insurance", "Insurance", "expense", "car"),
-    ("home", "Home", "expense", None),
-    ("home.groceries", "Groceries", "expense", "home"),
-    ("home.utilities", "Utilities", "expense", "home"),
-    ("home.rent", "Rent / mortgage", "expense", "home"),
-    ("health", "Health", "expense", None),
-    ("health.medicines", "Medicines", "expense", "health"),
-    ("health.appointments", "Appointments", "expense", "health"),
-    ("income", "Income", "income", None),
-    ("income.salary", "Salary", "income", "income"),
-    ("income.other", "Other income", "income", "income"),
-    ("transfer", "Transfer", "transfer", None),
+    ("car", "Samochód", "expense", None),
+    ("car.fuel", "Paliwo", "expense", "car"),
+    ("car.maintenance", "Serwis i naprawy", "expense", "car"),
+    ("car.inspection", "Przegląd techniczny", "expense", "car"),
+    ("car.insurance", "Ubezpieczenie", "expense", "car"),
+    ("home", "Dom", "expense", None),
+    ("home.groceries", "Zakupy spożywcze", "expense", "home"),
+    ("home.utilities", "Media i rachunki", "expense", "home"),
+    ("home.rent", "Czynsz / rata kredytu", "expense", "home"),
+    ("health", "Zdrowie", "expense", None),
+    ("health.medicines", "Leki", "expense", "health"),
+    ("health.appointments", "Wizyty lekarskie", "expense", "health"),
+    ("income", "Przychody", "income", None),
+    ("income.salary", "Wynagrodzenie", "income", "income"),
+    ("income.other", "Inne przychody", "income", "income"),
+    ("transfer", "Przelew", "transfer", None),
 ]
 
 
