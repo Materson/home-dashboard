@@ -6,6 +6,7 @@ import { OverviewPage } from "@/features/overview/OverviewPage";
 import { FinancePage } from "@/features/finance/FinancePage";
 import { LoansPage } from "@/features/finance/LoansPage";
 import { DebtsPage } from "@/features/finance/DebtsPage";
+import { CarsPage } from "@/features/cars/CarsPage";
 import { Loading } from "@/components/Loading";
 
 export function App() {
@@ -28,6 +29,7 @@ export function App() {
         <Route path="/finance" element={<FinancePage />} />
         <Route path="/finance/loans" element={<LoansPage />} />
         <Route path="/finance/debts" element={<DebtsPage />} />
+        <Route path="/cars" element={<CarsPage />} />
         <Route path="/auth/*" element={<Navigate to="/" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

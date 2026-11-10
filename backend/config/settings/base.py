@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "apps.reminders",
     "apps.notifications",
     "apps.finance",
+    "apps.cars",
 ]
 
 MIDDLEWARE = [

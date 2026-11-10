@@ -6,6 +6,7 @@ from ninja import NinjaAPI
 
 from apps.accounts.api import router as accounts_router
 from apps.access.api import router as access_router
+from apps.cars.api import router as cars_router
 from apps.core.api import router as core_router
 from apps.finance.api import router as finance_router
 from apps.notifications.api import router as notifications_router
@@ -26,4 +27,5 @@ api.add_router("/access", access_router, tags=["access"])
 api.add_router("/reminders", reminders_router, tags=["reminders"])
 api.add_router("/notifications", notifications_router, tags=["notifications"])
 api.add_router("/finance", finance_router, tags=["finance"])
+api.add_router("/cars", cars_router, tags=["cars"])
 api.add_router("", core_router, tags=["core"])
