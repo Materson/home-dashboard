@@ -31,13 +31,14 @@ The engine produces an ``AmortizationSchedule`` with one row per installment
 and summary totals; ``simulate_overpayment`` returns two schedules (current
 vs with-the-extra-payment) so the UI can show the saving side-by-side.
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from enum import Enum
-from typing import Iterable
 
 _ONE_DAY = timedelta(days=1)
 
@@ -70,7 +71,7 @@ class InstallmentRow:
     index: int
     due_date: date
     opening_balance: Decimal
-    installment: Decimal       # principal + interest paid this month (not inc. overpayment)
+    installment: Decimal  # principal + interest paid this month (not inc. overpayment)
     principal_part: Decimal
     interest_part: Decimal
     overpayment: Decimal
@@ -210,10 +211,12 @@ def build_schedule(
             take = min(op.amount, balance)
             overpay_total += take
             balance = _q(balance - take)
-            if op.mode == OverpaymentMode.REDUCE_INSTALLMENT and balance > ZERO and remaining_months > 0:
-                current_installment = _annuity_installment(
-                    balance, monthly_rate, remaining_months
-                )
+            if (
+                op.mode == OverpaymentMode.REDUCE_INSTALLMENT
+                and balance > ZERO
+                and remaining_months > 0
+            ):
+                current_installment = _annuity_installment(balance, monthly_rate, remaining_months)
             # SHORTEN_TERM: keep installment, the loop will naturally exit
             # early when balance hits zero.
 

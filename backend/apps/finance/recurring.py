@@ -13,6 +13,7 @@ Idempotency
 We advance ``next_run_at`` only after a successful save, and the loop runs
 inside a transaction. A duplicate daily run is a no-op because
 ``next_run_at`` has already moved past today."""
+
 from __future__ import annotations
 
 import logging
@@ -35,10 +36,8 @@ def materialize_due(now: datetime | None = None) -> int:
     today = timezone.localdate(now)
     created = 0
     with db_tx.atomic():
-        qs = (
-            RecurringRule.objects
-            .select_for_update(skip_locked=True)
-            .filter(is_active=True, next_run_at__lte=today)
+        qs = RecurringRule.objects.select_for_update(skip_locked=True).filter(
+            is_active=True, next_run_at__lte=today
         )
         for rule in qs:
             created += _advance_rule(rule, today)
