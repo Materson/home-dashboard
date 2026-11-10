@@ -6,6 +6,7 @@ Rules:
 - Serializes to ``{"amount": "123.45", "currency": "PLN"}`` with a trailing
   string to keep JSON's number limitations out of our ledger.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

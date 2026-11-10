@@ -3,6 +3,7 @@
 ``dispatch_due_reminders`` is the only task that transitions scheduled
 reminders to ``sent``. It uses ``SELECT … FOR UPDATE SKIP LOCKED`` so
 multiple workers don't deliver the same reminder twice."""
+
 from __future__ import annotations
 
 import logging

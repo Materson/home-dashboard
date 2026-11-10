@@ -4,6 +4,7 @@ Use ``EncryptedTextField`` for API keys, OAuth refresh tokens, webhook secrets.
 The key is ``settings.FIELD_ENCRYPTION_KEY`` (generated once with
 ``Fernet.generate_key()``) and is **never** rotated in-place — rotate by
 re-encrypting all rows in a data migration."""
+
 from __future__ import annotations
 
 from functools import lru_cache

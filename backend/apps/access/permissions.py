@@ -4,6 +4,7 @@ Each module is a top-level concern users can be granted on. Each app declares
 which module its models belong to by implementing ``Meta.access_module`` or
 registering with ``register_module_for(Model, "...")``. ``module_for_model``
 is the single lookup."""
+
 from __future__ import annotations
 
 from typing import Final

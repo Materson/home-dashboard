@@ -1,6 +1,7 @@
 """Admin-only API for managing grants (bulk/edit UI uses this).
 
 Users read their own merged view via ``/api/me/permissions``."""
+
 from __future__ import annotations
 
 from datetime import date, datetime

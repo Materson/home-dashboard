@@ -28,8 +28,9 @@ class ReminderOut(Schema):
 def upcoming(request: HttpRequest) -> list[Reminder]:
     user = request.user
     return list(
-        Reminder.objects.filter(recipients=user, status=Reminder.Status.SCHEDULED)
-        .order_by("due_at")[:50]
+        Reminder.objects.filter(recipients=user, status=Reminder.Status.SCHEDULED).order_by(
+            "due_at"
+        )[:50]
     )
 
 

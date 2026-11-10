@@ -6,6 +6,7 @@ Run after ``migrate``:
 Creates the Parents / Children / Admin groups and their AccessGrant rows.
 Re-running is safe — existing grants with the same (group, module, level,
 effect) are kept, missing ones are added, and no grant is ever deleted here."""
+
 from __future__ import annotations
 
 from django.contrib.auth.models import Group

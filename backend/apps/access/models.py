@@ -3,6 +3,7 @@
 One row = one grant. A user's effective permissions are the merge of their
 own grants plus the grants of every Group they belong to, with **deny winning
 over allow** inside the same (module, level) bucket."""
+
 from __future__ import annotations
 
 from django.conf import settings

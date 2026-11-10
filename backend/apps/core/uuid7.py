@@ -3,6 +3,7 @@
 UUIDv7 is sortable by creation time, which makes it a good primary key for
 things that are listed chronologically (transactions, reminders, …) without
 exposing a sequential integer in URLs."""
+
 from __future__ import annotations
 
 import os

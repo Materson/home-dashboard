@@ -23,7 +23,16 @@ class AccessGrantInline(admin.TabularInline):
     model = AccessGrant
     fk_name = "group"
     extra = 0
-    fields = ("module", "level", "effect", "subjects", "person_ids", "data_from", "data_to", "valid_until")
+    fields = (
+        "module",
+        "level",
+        "effect",
+        "subjects",
+        "person_ids",
+        "data_from",
+        "data_to",
+        "valid_until",
+    )
     verbose_name = "Access grant"
     verbose_name_plural = "Access grants"
 
