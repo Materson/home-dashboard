@@ -1,4 +1,5 @@
 """Finance tests: upsert idempotency, recurring materialization, permission scoping."""
+
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
@@ -18,15 +19,8 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def _system_categories(db):
-    """Minimal seed — what the seed_finance_categories command would create."""
-    car = Category.objects.create(key="car", name="Car", kind="expense", is_system=True)
-    fuel = Category.objects.create(
-        key="car.fuel", name="Fuel", kind="expense", parent=car, is_system=True
-    )
-    salary = Category.objects.create(
-        key="income.salary", name="Salary", kind="income", is_system=True
-    )
-    return {"car.fuel": fuel, "income.salary": salary}
+    """The system categories are seeded by finance migration 0006."""
+    return {key: Category.objects.get(key=key) for key in ("car.fuel", "income.salary")}
 
 
 @pytest.fixture
@@ -87,16 +81,25 @@ def test_search_filter_narrows_results(_system_categories, _parent_user):
     cat_fuel = _system_categories["car.fuel"]
     cat_salary = _system_categories["income.salary"]
     Transaction.objects.create(
-        date=date(2026, 1, 15), amount=Decimal("100"), currency="PLN",
-        category=cat_fuel, name="January fuel",
+        date=date(2026, 1, 15),
+        amount=Decimal("100"),
+        currency="PLN",
+        category=cat_fuel,
+        name="January fuel",
     )
     Transaction.objects.create(
-        date=date(2026, 2, 15), amount=Decimal("200"), currency="PLN",
-        category=cat_fuel, name="February fuel",
+        date=date(2026, 2, 15),
+        amount=Decimal("200"),
+        currency="PLN",
+        category=cat_fuel,
+        name="February fuel",
     )
     Transaction.objects.create(
-        date=date(2026, 2, 28), amount=Decimal("8000"), currency="PLN",
-        category=cat_salary, name="Salary",
+        date=date(2026, 2, 28),
+        amount=Decimal("8000"),
+        currency="PLN",
+        category=cat_salary,
+        name="Salary",
     )
 
     ctx = AccessContext.for_user(_parent_user)

@@ -27,7 +27,7 @@ def _finance_user(level: str = "edit"):
 
 @pytest.fixture
 def groceries(db):
-    return Category.objects.create(key="home.groceries", name="Zakupy", kind="expense")
+    return Category.objects.get(key="home.groceries")  # seeded by migration 0006
 
 
 # ---- Bookmarks ---------------------------------------------------------

@@ -31,14 +31,20 @@ def upsert_linked_transaction(
     name: str,
     person_id=None,
     notes: str = "",
+    authorized_by: str = "finance",
 ) -> Transaction:
     """Create or update the single Transaction linked to ``source_obj``.
 
     The pair ``(source_type, source_id)`` is unique (see Transaction.Meta),
     so another app can call this every time it saves — fuel entry edits
     update the ledger row, deletes cascade via a separate hook.
+
+    ``authorized_by`` is the module whose *edit* permission covers the write.
+    Other apps pass their own module ("cars"): the ledger row is a side
+    effect of recording fuel, so a user who may edit cars but not see
+    finance can still log a fill-up.
     """
-    ctx.require("finance", "edit")
+    ctx.require(authorized_by, "edit")
 
     try:
         category = Category.objects.get(key=category_key)
