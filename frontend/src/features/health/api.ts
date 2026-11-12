@@ -48,14 +48,6 @@ export type Dose = {
   person_name: string;
 };
 
-export type AttachmentInfo = {
-  id: string;
-  original_name: string;
-  mime_type: string;
-  size_bytes: number;
-  created_at: string;
-  url: string;
-};
 
 function csrf(): string {
   return document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
@@ -100,16 +92,6 @@ export const healthApi = {
     call<Dose[]>(`/health/doses?day=${day}&person_id=${personId}`),
   setDose: (id: string, status: DoseStatus) => call<Dose>(`/health/doses/${id}`, json("POST", { status })),
 
-  files: (resultId: string) =>
-    call<AttachmentInfo[]>(`/attachments?subject_type=health.testresult&subject_id=${resultId}`),
-  upload: (resultId: string, file: File) => {
-    const body = new FormData();
-    body.append("subject_type", "health.testresult");
-    body.append("subject_id", resultId);
-    body.append("file", file);
-    return call<AttachmentInfo>("/attachments", { method: "POST", body });
-  },
-  deleteFile: (id: string) => call<{ deleted: boolean }>(`/attachments/${id}`, { method: "DELETE" }),
 };
 
 // ---- Medicine cabinet ----
