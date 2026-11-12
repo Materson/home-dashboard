@@ -28,7 +28,10 @@ def dispatch_due_reminders(batch_size: int = 100) -> int:
     with transaction.atomic():
         due_qs = (
             Reminder.objects.select_for_update(skip_locked=True)
-            .filter(status=Reminder.Status.SCHEDULED, due_at__lte=now)
+            # Snoozed ones come back at their new due_at.
+            .filter(
+                status__in=[Reminder.Status.SCHEDULED, Reminder.Status.SNOOZED], due_at__lte=now
+            )
             .order_by("due_at")[:batch_size]
         )
         for reminder in due_qs:

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 @atomic
 def schedule(
-    ctx: AccessContext,
+    ctx: AccessContext | None,  # who scheduled it (None: a background job)
     *,
     title: str,
     body: str = "",
@@ -34,6 +34,7 @@ def schedule(
     sensitivity: str = "normal",
     recurrence: str | None = None,  # RFC-5545 RRULE string
     actions: Sequence[dict] = (),
+    link: str = "",
 ) -> Reminder:
     """Create a Reminder (and its next occurrences if ``recurrence`` is set)."""
     if not any([due_at, due_odometer_km]):
@@ -55,6 +56,7 @@ def schedule(
         channels=list(channels),
         sensitivity=sensitivity,
         actions=list(actions),
+        link=link,
     )
     reminder.recipients.set(recipients)
 
@@ -94,11 +96,13 @@ def mark_done(reminder: Reminder) -> None:
 
 
 def cancel_for_target(target: models.Model) -> int:
-    """Cancel the not-yet-sent reminders attached to ``target`` (used when
-    the record they're about is edited, replaced or deleted)."""
+    """Cancel the not-yet-sent (or snoozed) reminders attached to ``target``
+    (used when the record they're about is edited, replaced or deleted)."""
     ct = ContentType.objects.get_for_model(type(target))
     return Reminder.objects.filter(
-        content_type=ct, object_id=target.pk, status=Reminder.Status.SCHEDULED
+        content_type=ct,
+        object_id=target.pk,
+        status__in=[Reminder.Status.SCHEDULED, Reminder.Status.SNOOZED],
     ).update(status=Reminder.Status.CANCELLED)
 
 

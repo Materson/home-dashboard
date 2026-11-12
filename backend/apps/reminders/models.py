@@ -48,6 +48,8 @@ class Reminder(UUIDModel, TimeStamped):
     # The url is POSTed by the service worker, so it must carry its own
     # signed token (no session cookie / CSRF header is available there).
     actions = models.JSONField(default=list, blank=True)
+    # Page opened when the notification is clicked (e.g. "/notes?open=<id>").
+    link = models.CharField(max_length=200, blank=True)
 
     status = models.CharField(
         max_length=10, choices=Status.choices, default=Status.SCHEDULED, db_index=True

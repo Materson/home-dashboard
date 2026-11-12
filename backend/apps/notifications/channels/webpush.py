@@ -26,7 +26,7 @@ class WebPushChannel:
                 if reminder.sensitivity != Reminder.Sensitivity.PRIVATE
                 else "Otwórz panel, aby zobaczyć szczegóły."  # private: no details off-device
             ),
-            "url": "/reminders",
+            "url": reminder.link or "/",
             "tag": str(reminder.id),
             # Buttons (e.g. "Wzięte"); the service worker POSTs action urls.
             "actions": [
