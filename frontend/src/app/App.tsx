@@ -6,6 +6,8 @@ import { OverviewPage } from "@/features/overview/OverviewPage";
 import { FinancePage } from "@/features/finance/FinancePage";
 import { LoansPage } from "@/features/finance/LoansPage";
 import { DebtsPage } from "@/features/finance/DebtsPage";
+import { ChartsPage } from "@/features/finance/ChartsPage";
+import { CategoriesPage } from "@/features/finance/CategoriesPage";
 import { CarsPage } from "@/features/cars/CarsPage";
 import { HealthChooserPage } from "@/features/health/HealthChooserPage";
 import { HealthPersonPage } from "@/features/health/HealthPersonPage";
@@ -38,6 +40,8 @@ export function App() {
         <Route path="/finance" element={<FinancePage />} />
         <Route path="/finance/loans" element={<LoansPage />} />
         <Route path="/finance/debts" element={<DebtsPage />} />
+        <Route path="/finance/charts" element={<ChartsPage />} />
+        <Route path="/finance/categories" element={<CategoriesPage />} />
         <Route path="/cars" element={<CarsPage />} />
         <Route path="/health" element={<HealthChooserPage />} />
         <Route path="/health/cabinet" element={<CabinetPage />} />

@@ -13,6 +13,7 @@ import {
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { isoDate, parseIsoDate } from "@/lib/format";
 import { useTranslation } from "react-i18next";
 import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 
@@ -109,7 +110,7 @@ function ScheduleTable({ schedule, title }: { schedule: Schedule; title: string 
 
 function OverpaymentSimulator({ loanId }: { loanId: string }) {
   const { t } = useTranslation();
-  const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState<string>(isoDate(new Date()));
   const [amount, setAmount] = useState("");
   const [mode, setMode] = useState<"shorten_term" | "reduce_installment">("shorten_term");
   const [result, setResult] = useState<OverpaymentComparison | null>(null);
@@ -128,8 +129,8 @@ function OverpaymentSimulator({ loanId }: { loanId: string }) {
         <Group align="flex-end">
           <DatePickerInput
             label={t("finance.field.date")}
-            value={new Date(date)}
-            onChange={(d) => setDate((d ?? new Date()).toISOString().slice(0, 10))}
+            value={parseIsoDate(date)}
+            onChange={(d) => setDate(isoDate(d ?? new Date()))}
           />
           <AmountInput label={t("finance.field.amount")} value={amount} onChange={setAmount} />
           <Select

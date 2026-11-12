@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from dateutil.rrule import rrulestr
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.db import models
 from django.db.transaction import atomic
+from django.utils import timezone
 
-from .models import Category, DebtEntry, Transaction, TransactionBookmark
+from .models import (
+    Category,
+    DebtEntry,
+    RecurringRule,
+    Transaction,
+    TransactionBookmark,
+    TransactionShare,
+)
 from .selectors import list_debt_entries
 
 if TYPE_CHECKING:
@@ -70,6 +79,7 @@ def upsert_linked_transaction(
         source_id=oid,
         defaults=defaults,
     )
+    save_shares(tx, [(person_id, amount)] if person_id else [])
     return tx
 
 
@@ -86,12 +96,9 @@ def propagate_edit_to_rule(
     *,
     update_future: bool,
 ) -> None:
-    """When a user edits a recurring-rule-materialized Transaction and the UI
-    asks "apply to future occurrences?", this is what runs on yes.
-
-    It copies the edited transaction's ``name / amount / currency / category /
-    person / notes`` back onto the rule, so the next auto-materialized
-    transactions inherit them."""
+    """ "This and all following": the edited occurrence's name, amount,
+    currency, category, notes and split go to the rule (future occurrences)
+    and to the occurrences already recorded after it. Dates stay."""
     if not update_future:
         return
     rule = transaction.recurring_rule
@@ -104,9 +111,151 @@ def propagate_edit_to_rule(
     rule.category = transaction.category
     rule.person_id = transaction.person_id
     rule.notes = transaction.notes
+    rule.shares = shares_json([(s.person_id, s.amount) for s in transaction.shares.all()])
     rule.save(
-        update_fields=["name", "amount", "currency", "category", "person", "notes", "updated_at"]
+        update_fields=[
+            "name",
+            "amount",
+            "currency",
+            "category",
+            "person",
+            "notes",
+            "shares",
+            "updated_at",
+        ]
     )
+    pairs = [(s.person_id, s.amount) for s in transaction.shares.all()]
+    for later in rule.instances.filter(date__gt=transaction.date).exclude(pk=transaction.pk):
+        for field in ("name", "amount", "currency", "category_id", "notes"):
+            setattr(later, field, getattr(transaction, field))
+        later.save()
+        save_shares(later, pairs)
+
+
+@atomic
+def update_recurring(
+    ctx: AccessContext,
+    rule_id: UUID,
+    data: dict[str, Any],
+    *,
+    shares: list[dict] | None = None,
+    repeat: str = "",
+) -> RecurringRule:
+    """Edit a repeating payment from the list: what the next occurrences
+    will be (recorded ones stay). A new frequency applies from today on."""
+    from . import recurring  # noqa: PLC0415
+
+    ctx.require("finance", "edit")
+    rule = RecurringRule.objects.get(pk=rule_id)
+    pairs = normalize_shares(data["amount"], shares, None)
+    for k, v in data.items():
+        setattr(rule, k, v)
+    if rule.end_date and rule.end_date < rule.start_date:
+        raise ValueError("the end is before the first date")
+    rule.person_id = pairs[0][0] if len(pairs) == 1 else None
+    rule.shares = shares_json(pairs)
+    today = timezone.localdate()
+    if repeat:
+        if repeat not in REPEATS:
+            raise ValueError(f"repeat must be one of {sorted(REPEATS)}")
+        text = repeat_rule(repeat, rule.start_date)
+        if text != rule.rrule:
+            # A new frequency applies from today on — nothing is back-filled.
+            rule.rrule = text
+            last = rule.instances.order_by("-date").values_list("date", flat=True).first()
+            after = max(last or rule.start_date - timedelta(days=1), today - timedelta(days=1))
+            nxt = rrulestr(text, dtstart=datetime.combine(rule.start_date, time())).after(
+                datetime.combine(after, time())
+            )
+            if nxt is not None:
+                rule.next_run_at = nxt.date()
+    if rule.end_date and rule.next_run_at > rule.end_date:
+        rule.is_active = False
+    rule.save()
+    if rule.is_active:
+        recurring.advance_rule(rule, timezone.localdate())
+    return rule
+
+
+# ---- Categories ---------------------------------------------------------
+
+CATEGORY_KINDS = ("expense", "income")
+
+
+def _clean_name(name: str) -> str:
+    name = " ".join(name.split())[:80]
+    if not name:
+        raise ValueError("the name is empty")
+    return name
+
+
+def _check_unique(name: str, kind: str, exclude_id: UUID | None = None) -> None:
+    clash = Category.objects.filter(name__iexact=name, kind=kind)
+    if exclude_id:
+        clash = clash.exclude(pk=exclude_id)
+    if clash.exists():
+        raise ValueError(f"a category named {name!r} already exists")
+
+
+@atomic
+def create_category(
+    ctx: AccessContext, *, name: str, kind: str, color: str = "#868e96"
+) -> Category:
+    ctx.require("finance", "edit")
+    if kind not in CATEGORY_KINDS:
+        raise ValueError("a category is an expense or an income one")
+    name = _clean_name(name)
+    _check_unique(name, kind)
+    from apps.core.uuid7 import uuid7  # noqa: PLC0415
+
+    return Category.objects.create(
+        key=f"user.{uuid7().hex[:12]}", name=name, kind=kind, color=color or "#868e96"
+    )
+
+
+@atomic
+def update_category(ctx: AccessContext, category_id: UUID, *, name: str, color: str) -> Category:
+    """Rename / recolour — built-in categories too (their key stays)."""
+    ctx.require("finance", "edit")
+    cat = Category.objects.get(pk=category_id)
+    cat.name = _clean_name(name)
+    _check_unique(cat.name, cat.kind, exclude_id=cat.id)
+    cat.color = color or cat.color
+    cat.save(update_fields=["name", "color", "updated_at"])
+    return cat
+
+
+@atomic
+def merge_category(ctx: AccessContext, source_id: UUID, target_id: UUID) -> int:
+    """Move everything from ``source`` into ``target`` (same kind) and delete
+    ``source``. Returns how many transactions moved."""
+    ctx.require("finance", "edit")
+    source = Category.objects.get(pk=source_id)
+    target = Category.objects.get(pk=target_id)
+    if source.pk == target.pk:
+        raise ValueError("pick a different category")
+    if source.kind != target.kind:
+        raise ValueError("both categories must be of the same kind")
+    if source.is_system:
+        raise ValueError("a built-in category can't be merged away")
+    moved = source.transactions.update(category=target)
+    source.recurring_rules.update(category=target)
+    source.bookmarks.update(category=target)
+    source.children.update(parent=target)
+    source.delete()
+    return moved
+
+
+@atomic
+def delete_category(ctx: AccessContext, category_id: UUID) -> None:
+    """Only an unused, non-built-in one — otherwise merge it into another."""
+    ctx.require("finance", "edit")
+    cat = Category.objects.get(pk=category_id)
+    if cat.is_system:
+        raise ValueError("a built-in category can't be deleted (rename it instead)")
+    if cat.transactions.exists() or cat.recurring_rules.exists():
+        raise ValueError("the category is in use — merge it into another one instead")
+    cat.delete()
 
 
 # ---- Bookmarks ---------------------------------------------------------
@@ -114,6 +263,9 @@ def propagate_edit_to_rule(
 
 def create_bookmark(ctx: AccessContext, **fields) -> TransactionBookmark:
     ctx.require("finance", "edit")
+    fields["shares"] = shares_json(
+        normalize_shares(fields["amount"], fields.get("shares"), fields.get("person_id"))
+    )
     return TransactionBookmark.objects.create(owner_id=ctx.user_id, **fields)
 
 
@@ -127,6 +279,9 @@ def _own_bookmark(ctx: AccessContext, bookmark_id: UUID) -> TransactionBookmark:
 
 def update_bookmark(ctx: AccessContext, bookmark_id: UUID, **fields) -> TransactionBookmark:
     bm = _own_bookmark(ctx, bookmark_id)
+    fields["shares"] = shares_json(
+        normalize_shares(fields["amount"], fields.get("shares"), fields.get("person_id"))
+    )
     for k, v in fields.items():
         setattr(bm, k, v)
     bm.save()
@@ -186,13 +341,155 @@ def settle_debt(ctx: AccessContext, *, name: str, currency: str, on: date) -> De
     )
 
 
-def create_transaction(ctx: AccessContext, data: dict[str, Any]) -> Transaction:
+# ---- Shares: who a transaction was for ---------------------------------
+
+CENT = Decimal("0.01")
+REPEATS = {
+    "weekly": "FREQ=WEEKLY",
+    "monthly": "FREQ=MONTHLY",
+    "quarterly": "FREQ=MONTHLY;INTERVAL=3",
+    "yearly": "FREQ=YEARLY",
+}
+
+
+def equal_split(amount: Decimal, person_ids: list) -> list[tuple[Any, Decimal]]:
+    """600 for 2 → 300 + 300; 100 for 3 → 33.34 + 33.33 + 33.33 (cents add up)."""
+    if not person_ids:
+        return []
+    cents = int((amount / CENT).to_integral_value())
+    base, rest = divmod(cents, len(person_ids))
+    return [
+        (pid, Decimal(base + (1 if i < rest else 0)) * CENT) for i, pid in enumerate(person_ids)
+    ]
+
+
+def normalize_shares(
+    amount: Decimal, shares: list[dict] | None, person_id=None
+) -> list[tuple[UUID, Decimal]]:
+    """Validated (person, amount) pairs: explicit shares must name distinct,
+    existing people and add up to the amount; otherwise ``person_id`` gets
+    all of it; neither = shared by the household (no shares)."""
+    from apps.people.models import Person  # noqa: PLC0415
+
+    if not shares:
+        return [(UUID(str(person_id)), amount)] if person_id else []
+    pairs = [(UUID(str(s["person_id"])), Decimal(str(s["amount"])).quantize(CENT)) for s in shares]
+    ids = [p for p, _ in pairs]
+    if len(set(ids)) != len(ids):
+        raise ValueError("a person appears twice in the split")
+    if Person.objects.filter(pk__in=ids).count() != len(ids):
+        raise ValueError("unknown person in the split")
+    if any(a <= 0 for _, a in pairs):
+        raise ValueError("every part of the split must be more than 0")
+    if sum(a for _, a in pairs) != Decimal(amount).quantize(CENT):
+        raise ValueError("the parts of the split must add up to the amount")
+    return pairs
+
+
+def shares_json(pairs: list[tuple[UUID, Decimal]]) -> list[dict[str, str]]:
+    return [{"person_id": str(p), "amount": f"{a:.2f}"} for p, a in pairs]
+
+
+def save_shares(tx: Transaction, pairs: list[tuple[UUID, Decimal]]) -> None:
+    tx.shares.all().delete()
+    TransactionShare.objects.bulk_create(
+        TransactionShare(transaction=tx, person_id=p, amount=a) for p, a in pairs
+    )
+    person_id = pairs[0][0] if len(pairs) == 1 else None
+    if tx.person_id != person_id:
+        tx.person_id = person_id
+        tx.save(update_fields=["person"])
+
+
+def _next_occurrence(rrule_text: str, start: date) -> date:
+    rule = rrulestr(rrule_text, dtstart=datetime.combine(start, time()))
+    nxt = rule.after(datetime.combine(start, time()))
+    return nxt.date() if nxt else start
+
+
+def repeat_rule(kind: str, start: date) -> str:
+    text = REPEATS[kind]
+    # A payment on the 29th-31st would skip shorter months; it goes on the
+    # last day of every month instead.
+    if kind in ("monthly", "quarterly") and start.day > 28:  # noqa: PLR2004
+        text += ";BYMONTHDAY=-1"
+    return text
+
+
+@atomic
+def create_transaction(
+    ctx: AccessContext,
+    data: dict[str, Any],
+    *,
+    shares: list[dict] | None = None,
+    repeat: str = "",
+    repeat_until: date | None = None,
+) -> Transaction:
     """A hand-entered transaction (the page form, or a confirmed assistant
-    proposal). ``related_kind``/``related_id`` are validated."""
+    proposal), split between people, optionally repeating: then a
+    RecurringRule is created too and this is its first occurrence."""
     ctx.require("finance", "edit")
     data = {"related_kind": "", "related_id": None, **data}
     check_related(data["related_kind"], data["related_id"])
-    return Transaction.objects.create(**data)
+    pairs = normalize_shares(data["amount"], shares, data.get("person_id"))
+    data["person_id"] = pairs[0][0] if len(pairs) == 1 else None
+    if repeat:
+        if repeat not in REPEATS:
+            raise ValueError(f"repeat must be one of {sorted(REPEATS)}")
+        if repeat_until and repeat_until < data["date"]:
+            raise ValueError("the repeat end is before the first date")
+        text = repeat_rule(repeat, data["date"])
+        data["recurring_rule"] = RecurringRule.objects.create(
+            name=data["name"],
+            amount=data["amount"],
+            currency=data.get("currency", "PLN"),
+            category_id=data["category_id"],
+            person_id=data["person_id"],
+            notes=data.get("notes", ""),
+            rrule=text,
+            start_date=data["date"],
+            end_date=repeat_until,
+            next_run_at=_next_occurrence(text, data["date"]),
+            shares=shares_json(pairs),
+        )
+    tx = Transaction.objects.create(**data)
+    save_shares(tx, pairs)
+    if repeat:
+        from . import recurring  # noqa: PLC0415
+
+        recurring.advance_rule(data["recurring_rule"], timezone.localdate())
+    return tx
+
+
+@atomic
+def update_transaction(
+    ctx: AccessContext,
+    tx_id: UUID,
+    data: dict[str, Any],
+    *,
+    shares: list[dict] | None = None,
+    update_future: bool = False,
+) -> Transaction:
+    ctx.require("finance", "edit")
+    tx = Transaction.objects.get(pk=tx_id)
+    check_related(data.get("related_kind", ""), data.get("related_id"))
+    pairs = normalize_shares(data["amount"], shares, data.get("person_id"))
+    for k, v in data.items():
+        setattr(tx, k, v)
+    tx.person_id = pairs[0][0] if len(pairs) == 1 else None
+    tx.save()
+    save_shares(tx, pairs)
+    propagate_edit_to_rule(ctx, tx, update_future=update_future)
+    return tx
+
+
+def stop_recurring(ctx: AccessContext, rule_id: UUID) -> RecurringRule:
+    """No more occurrences; the ones already recorded stay."""
+    ctx.require("finance", "edit")
+    rule = RecurringRule.objects.get(pk=rule_id)
+    rule.is_active = False
+    rule.save(update_fields=["is_active", "updated_at"])
+    return rule
 
 
 def check_related(kind: str, related_id: UUID | None) -> None:

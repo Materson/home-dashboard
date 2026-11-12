@@ -127,7 +127,27 @@ class Transaction(UUIDModel, TimeStamped):
         return f"{self.date} {self.name} {self.amount} {self.currency}"
 
 
+class TransactionShare(models.Model):
+    """Who a transaction was for and how much of it — e.g. one insurance
+    policy for a child and a spouse, 300 + 300. Shares add up to the amount.
+    ``Transaction.person`` mirrors a single-person share (and stays the
+    access-scope field); several shares leave it empty."""
+
+    transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, related_name="shares")
+    person = models.ForeignKey("people.Person", on_delete=models.PROTECT, related_name="+")
+    amount = money_amount_field()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["transaction", "person"], name="finance_share_once")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.person_id}: {self.amount}"
+
+
 class RecurringRule(UUIDModel, TimeStamped):
+    # [{"person_id": "…", "amount": "300.00"}, …] copied to every occurrence.
     """A recurring income/expense template (rent, salary, Netflix)."""
 
     name = models.CharField(max_length=200)
@@ -150,6 +170,7 @@ class RecurringRule(UUIDModel, TimeStamped):
     end_date = models.DateField(null=True, blank=True)
     # Cursor: the next occurrence we have NOT yet materialized.
     next_run_at = models.DateField(db_index=True)
+    shares = models.JSONField(default=list, blank=True)
 
     is_active = models.BooleanField(default=True)
 
@@ -258,6 +279,7 @@ class TransactionBookmark(UUIDModel, TimeStamped):
     )
     notes = models.TextField(blank=True)
     sort_order = models.PositiveIntegerField(default=0)
+    shares = models.JSONField(default=list, blank=True)  # like RecurringRule.shares
 
     class Meta:
         ordering = ("sort_order", "label")

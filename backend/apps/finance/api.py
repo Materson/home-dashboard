@@ -36,14 +36,23 @@ class CategoryOut(Schema):
     parent_id: UUID | None
     color: str
     is_system: bool
+    used: int  # transactions in it
 
 
 class CategoryIn(Schema):
-    key: str
     name: str
-    kind: str = "expense"
-    parent_id: UUID | None = None
+    kind: Literal["expense", "income"] = "expense"
     color: str = "#868e96"
+
+
+class CategoryEdit(Schema):
+    name: str
+    color: str = ""
+
+
+class ShareSchema(Schema):
+    person_id: UUID
+    amount: Decimal
 
 
 class TransactionOut(Schema):
@@ -59,6 +68,11 @@ class TransactionOut(Schema):
     source_id: UUID | None
     related_kind: str
     related_id: UUID | None
+    shares: list[ShareSchema]
+
+    @staticmethod
+    def resolve_shares(obj) -> list[dict]:
+        return [{"person_id": s.person_id, "amount": s.amount} for s in obj.shares.all()]
 
 
 class TransactionIn(Schema):
@@ -72,6 +86,11 @@ class TransactionIn(Schema):
     # Optional "what it was for", e.g. related_kind="health.cabinetitem".
     related_kind: str = ""
     related_id: UUID | None = None
+    # Who it was for; empty = the household. Must add up to the amount.
+    shares: list[ShareSchema] = []
+    # Repeat from this date (new transactions only).
+    repeat: Literal["", "weekly", "monthly", "quarterly", "yearly"] = ""
+    repeat_until: date | None = None
 
 
 class TransactionEdit(TransactionIn):
@@ -110,6 +129,8 @@ class RecurringRuleOut(Schema):
     end_date: date | None
     next_run_at: date
     is_active: bool
+    shares: list[ShareSchema]
+    notes: str
 
 
 class RecurringRuleIn(Schema):
@@ -123,6 +144,7 @@ class RecurringRuleIn(Schema):
     end_date: date | None = None
     next_run_at: date
     is_active: bool = True
+    shares: list[ShareSchema] = []
 
 
 class LoanOut(Schema):
@@ -194,17 +216,52 @@ def list_categories(request: HttpRequest) -> list[Category]:
     return list(selectors.list_categories(get_ctx(request)))
 
 
-@router.post("/categories", response=CategoryOut)
-def create_category(request: HttpRequest, payload: CategoryIn) -> Category:
-    get_ctx(request).require("finance", "manage")
-    return Category.objects.create(**payload.dict())
+def _with_usage(cat: Category) -> Category:
+    cat.used = cat.transactions.count()
+    return cat
 
 
-@router.delete("/categories/{category_id}")
-def delete_category(request: HttpRequest, category_id: UUID) -> dict[str, bool]:
-    get_ctx(request).require("finance", "manage")
-    cat = get_object_or_404(Category, pk=category_id, is_system=False)
-    cat.delete()
+@router.post("/categories", response={200: CategoryOut, 422: dict})
+def create_category(request: HttpRequest, payload: CategoryIn):
+    try:
+        return _with_usage(services.create_category(get_ctx(request), **payload.dict()))
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+@router.put("/categories/{category_id}", response={200: CategoryOut, 422: dict})
+def update_category(request: HttpRequest, category_id: UUID, payload: CategoryEdit):
+    get_object_or_404(Category, pk=category_id)
+    try:
+        return _with_usage(
+            services.update_category(get_ctx(request), category_id, **payload.dict())
+        )
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+class MergeIn(Schema):
+    into: UUID
+
+
+@router.post("/categories/{category_id}/merge", response={200: dict, 422: dict})
+def merge_category(request: HttpRequest, category_id: UUID, payload: MergeIn):
+    """Move everything into another category of the same kind, then remove this one."""
+    get_object_or_404(Category, pk=category_id)
+    get_object_or_404(Category, pk=payload.into)
+    try:
+        return {"moved": services.merge_category(get_ctx(request), category_id, payload.into)}
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+@router.delete("/categories/{category_id}", response={200: dict, 422: dict})
+def delete_category(request: HttpRequest, category_id: UUID):
+    get_object_or_404(Category, pk=category_id)
+    try:
+        services.delete_category(get_ctx(request), category_id)
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
     return {"deleted": True}
 
 
@@ -229,27 +286,28 @@ def list_transactions(request: HttpRequest, filters: Query[TransactionSearch]) -
 
 @router.post("/transactions", response={200: TransactionOut, 422: dict})
 def create_transaction(request: HttpRequest, payload: TransactionIn):
+    data = payload.dict()
+    shares = data.pop("shares")
+    repeat, until = data.pop("repeat"), data.pop("repeat_until")
     try:
-        return services.create_transaction(get_ctx(request), payload.dict())
+        return services.create_transaction(
+            get_ctx(request), data, shares=shares, repeat=repeat, repeat_until=until
+        )
     except ValueError as exc:
         return 422, {"detail": str(exc)}
 
 
 @router.put("/transactions/{tx_id}", response={200: TransactionOut, 422: dict})
 def update_transaction(request: HttpRequest, tx_id: UUID, payload: TransactionEdit):
-    ctx = get_ctx(request)
-    ctx.require("finance", "edit")
-    tx = get_object_or_404(Transaction, pk=tx_id)
-    data = payload.dict(exclude={"update_future"})
+    data = payload.dict(exclude={"update_future", "repeat", "repeat_until"})
+    shares = data.pop("shares")
+    get_object_or_404(Transaction, pk=tx_id)
     try:
-        services.check_related(data["related_kind"], data["related_id"])
+        return services.update_transaction(
+            get_ctx(request), tx_id, data, shares=shares, update_future=payload.update_future
+        )
     except ValueError as exc:
         return 422, {"detail": str(exc)}
-    for k, v in data.items():
-        setattr(tx, k, v)
-    tx.save()
-    services.propagate_edit_to_rule(ctx, tx, update_future=payload.update_future)
-    return tx
 
 
 @router.delete("/transactions/{tx_id}")
@@ -261,10 +319,52 @@ def delete_transaction(request: HttpRequest, tx_id: UUID) -> dict[str, bool]:
 
 @router.get("/monthly-totals", response=list[MonthlySumOut])
 def monthly_totals(
-    request: HttpRequest, until: date | None = None, months: int = 12
+    request: HttpRequest, until: date | None = None, months: int = 12, person: str | None = None
 ) -> list[selectors.MonthlySum]:
-    """Chart data: the ``months`` months ending with ``until``'s month."""
-    return selectors.monthly_totals(get_ctx(request), until=until, months=months)
+    """Chart data: the ``months`` months ending with ``until``'s month;
+    ``person`` = one person's parts, or "shared" for unsplit spending."""
+    return selectors.monthly_totals(get_ctx(request), until=until, months=months, person=person)
+
+
+class SliceOut(Schema):
+    key: str
+    label: str
+    color: str
+    total: Decimal
+
+
+@router.get("/category-totals", response=list[SliceOut])
+def category_totals(  # noqa: PLR0917 — query parameters
+    request: HttpRequest,
+    date_from: date,
+    date_to: date,
+    kind: Literal["income", "expense"] = "expense",
+    person: str | None = None,
+    currency: str = "PLN",
+) -> list[selectors.Slice]:
+    """Pie chart data: totals per category, biggest first."""
+    return selectors.category_totals(
+        get_ctx(request),
+        date_from=date_from,
+        date_to=date_to,
+        kind=kind,
+        person=person,
+        currency=currency,
+    )
+
+
+@router.get("/person-totals", response=list[SliceOut])
+def person_totals(
+    request: HttpRequest,
+    date_from: date,
+    date_to: date,
+    kind: Literal["income", "expense"] = "expense",
+    currency: str = "PLN",
+) -> list[selectors.Slice]:
+    """Pie chart data: who the money was for ("shared" = the household)."""
+    return selectors.person_totals(
+        get_ctx(request), date_from=date_from, date_to=date_to, kind=kind, currency=currency
+    )
 
 
 # -------------------- Recurring --------------------
@@ -275,10 +375,47 @@ def list_recurring(request: HttpRequest) -> list[RecurringRule]:
     return list(selectors.list_recurring(get_ctx(request)))
 
 
-@router.post("/recurring", response=RecurringRuleOut)
-def create_recurring(request: HttpRequest, payload: RecurringRuleIn) -> RecurringRule:
+@router.post("/recurring", response={200: RecurringRuleOut, 422: dict})
+def create_recurring(request: HttpRequest, payload: RecurringRuleIn):
     get_ctx(request).require("finance", "edit")
-    return RecurringRule.objects.create(**payload.dict())
+    data = payload.dict()
+    try:
+        pairs = services.normalize_shares(data["amount"], data.pop("shares"), data.get("person_id"))
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+    data["person_id"] = pairs[0][0] if len(pairs) == 1 else None
+    return RecurringRule.objects.create(**data, shares=services.shares_json(pairs))
+
+
+class RecurringEditIn(Schema):
+    name: str
+    amount: Decimal
+    currency: str = "PLN"
+    category_id: UUID
+    notes: str = ""
+    end_date: date | None = None
+    shares: list[ShareSchema] = []
+    repeat: Literal["", "weekly", "monthly", "quarterly", "yearly"] = ""
+
+
+@router.put("/recurring/{rule_id}", response={200: RecurringRuleOut, 422: dict})
+def update_recurring(request: HttpRequest, rule_id: UUID, payload: RecurringEditIn):
+    """Change what the next occurrences will be (recorded ones stay)."""
+    get_object_or_404(RecurringRule, pk=rule_id)
+    data = payload.dict()
+    shares, repeat = data.pop("shares"), data.pop("repeat")
+    try:
+        return services.update_recurring(
+            get_ctx(request), rule_id, data, shares=shares, repeat=repeat
+        )
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+@router.post("/recurring/{rule_id}/stop", response=RecurringRuleOut)
+def stop_recurring(request: HttpRequest, rule_id: UUID) -> RecurringRule:
+    """Stop repeating; what was already recorded stays."""
+    return services.stop_recurring(get_ctx(request), rule_id)
 
 
 @router.delete("/recurring/{rule_id}")
@@ -414,6 +551,7 @@ class BookmarkOut(Schema):
     person_id: UUID | None
     notes: str
     sort_order: int
+    shares: list[ShareSchema]
 
 
 class BookmarkIn(Schema):
@@ -425,6 +563,7 @@ class BookmarkIn(Schema):
     person_id: UUID | None = None
     notes: str = ""
     sort_order: int = 0
+    shares: list[ShareSchema] = []
 
 
 @router.get("/bookmarks", response=list[BookmarkOut])

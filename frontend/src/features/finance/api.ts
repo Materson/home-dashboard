@@ -4,6 +4,11 @@
  * Once the OpenAPI client is more stable we can port these to `openapi-fetch`.
  */
 
+import type { Share } from "./shares";
+
+export type { Share };
+export type Repeat = "" | "weekly" | "monthly" | "quarterly" | "yearly";
+
 export type Category = {
   id: string;
   key: string;
@@ -12,6 +17,8 @@ export type Category = {
   parent_id: string | null;
   color: string;
   is_system: boolean;
+  /** Transactions in it. */
+  used: number;
 };
 
 export type Transaction = {
@@ -28,7 +35,46 @@ export type Transaction = {
   /** What it was for, e.g. "health.cabinetitem" + a medicine id ("" / null = nothing). */
   related_kind: string;
   related_id: string | null;
+  /** Who it was for, split; empty = the household. */
+  shares: Share[];
 };
+
+/** What the form sends: a transaction, optionally repeating from its date. */
+export type TransactionInput = Omit<Transaction, "id" | "recurring_rule_id" | "source_id"> & {
+  repeat?: Repeat;
+  repeat_until?: string | null;
+};
+
+export type RecurringRule = {
+  id: string;
+  name: string;
+  amount: string;
+  currency: string;
+  category_id: string;
+  person_id: string | null;
+  rrule: string;
+  start_date: string;
+  end_date: string | null;
+  next_run_at: string;
+  is_active: boolean;
+  shares: Share[];
+  notes: string;
+};
+
+/** Editing a repeating payment changes its next occurrences. */
+export type RecurringEdit = {
+  name: string;
+  amount: string;
+  currency: string;
+  category_id: string;
+  notes: string;
+  end_date: string | null;
+  shares: Share[];
+  repeat: Repeat;
+};
+
+/** A pie slice: a category or a person ("shared" = the household). */
+export type Slice = { key: string; label: string; color: string; total: string };
 
 export type TransactionFilters = {
   q?: string;
@@ -99,6 +145,7 @@ export type Bookmark = {
   person_id: string | null;
   notes: string;
   sort_order: number;
+  shares: Share[];
 };
 export type BookmarkInput = Omit<Bookmark, "id" | "sort_order"> & { sort_order?: number };
 
@@ -139,7 +186,11 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (unsafe) headers.set("X-CSRFToken", csrf());
   const resp = await fetch("/api/finance" + path, { ...init, headers, credentials: "include" });
-  if (!resp.ok) throw new Error(`${method} ${path} failed: ${resp.status}`);
+  if (!resp.ok) {
+    // The server explains what's wrong (e.g. "the category is in use") — show that.
+    const body = (await resp.json().catch(() => ({}))) as { detail?: unknown };
+    throw new Error(typeof body.detail === "string" ? body.detail : `${method} ${path} failed: ${resp.status}`);
+  }
   return (await resp.json()) as T;
 }
 
@@ -165,15 +216,36 @@ function qs(f: TransactionFilters): string {
 
 export const financeApi = {
   listCategories: () => call<Category[]>("/categories"),
+  createCategory: (body: { name: string; kind: "expense" | "income"; color: string }) =>
+    call<Category>("/categories", { method: "POST", body: JSON.stringify(body) }),
+  updateCategory: (id: string, body: { name: string; color: string }) =>
+    call<Category>(`/categories/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  mergeCategory: (id: string, into: string) =>
+    call<{ moved: number }>(`/categories/${id}/merge`, { method: "POST", body: JSON.stringify({ into }) }),
+  deleteCategory: (id: string) => call<{ deleted: boolean }>(`/categories/${id}`, { method: "DELETE" }),
   listTransactions: (f: TransactionFilters = {}) =>
     call<Transaction[]>(`/transactions${qs(f)}`),
-  createTransaction: (body: Omit<Transaction, "id" | "recurring_rule_id" | "source_id">) =>
+  createTransaction: (body: TransactionInput) =>
     call<Transaction>("/transactions", { method: "POST", body: JSON.stringify(body) }),
-  updateTransaction: (id: string, body: Omit<Transaction, "id" | "recurring_rule_id" | "source_id"> & { update_future?: boolean }) =>
+  updateTransaction: (id: string, body: TransactionInput & { update_future?: boolean }) =>
     call<Transaction>(`/transactions/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteTransaction: (id: string) => call<{ deleted: boolean }>(`/transactions/${id}`, { method: "DELETE" }),
-  monthlyTotals: (until: string, months = 12) =>
-    call<MonthlyTotal[]>(`/monthly-totals?until=${until}&months=${months}`),
+  monthlyTotals: (until: string, months = 12, person?: string | null) =>
+    call<MonthlyTotal[]>(
+      `/monthly-totals?until=${until}&months=${months}${person ? `&person=${person}` : ""}`,
+    ),
+  categoryTotals: (from: string, to: string, kind: "income" | "expense", person?: string | null) =>
+    call<Slice[]>(
+      `/category-totals?date_from=${from}&date_to=${to}&kind=${kind}${person ? `&person=${person}` : ""}`,
+    ),
+  personTotals: (from: string, to: string, kind: "income" | "expense") =>
+    call<Slice[]>(`/person-totals?date_from=${from}&date_to=${to}&kind=${kind}`),
+
+  listRecurring: () => call<RecurringRule[]>("/recurring"),
+  updateRecurring: (id: string, body: RecurringEdit) =>
+    call<RecurringRule>(`/recurring/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  stopRecurring: (id: string) => call<RecurringRule>(`/recurring/${id}/stop`, { method: "POST" }),
+  deleteRecurring: (id: string) => call<{ deleted: boolean }>(`/recurring/${id}`, { method: "DELETE" }),
 
   listLoans: () => call<Loan[]>("/loans"),
   schedule: (id: string) => call<Schedule>(`/loans/${id}/schedule`),

@@ -25,12 +25,13 @@ import {
 import { DatePickerInput } from "@mantine/dates";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isoDate, parseIsoDate } from "@/lib/format";
 import { useTranslation } from "react-i18next";
 import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 
 import { financeApi, type DebtBalance, type DebtDirection, type DebtEntryInput } from "./api";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => isoDate(new Date());
 const sameName = (a: string | null, b: string) =>
   !!a && a.trim().toLowerCase() === b.trim().toLowerCase();
 
@@ -325,14 +326,14 @@ function DebtEntryModal(props: {
         <Group grow>
           <DatePickerInput
             label={t("finance.field.date")}
-            value={new Date(form.date)}
-            onChange={(d) => setForm({ ...form, date: (d ?? new Date()).toISOString().slice(0, 10) })}
+            value={parseIsoDate(form.date)}
+            onChange={(d) => setForm({ ...form, date: isoDate(d ?? new Date()) })}
           />
           <DatePickerInput
             label={t("debts.field.dueDate")}
             clearable
-            value={form.due_date ? new Date(form.due_date) : null}
-            onChange={(d) => setForm({ ...form, due_date: d ? d.toISOString().slice(0, 10) : null })}
+            value={form.due_date ? parseIsoDate(form.due_date) : null}
+            onChange={(d) => setForm({ ...form, due_date: d ? isoDate(d) : null })}
           />
         </Group>
         <TextInput

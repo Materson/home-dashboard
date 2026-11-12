@@ -8,11 +8,19 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from django.db.models import Q, QuerySet, Sum
+from django.db.models import Count, Q, QuerySet, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
-from .models import Category, DebtEntry, Loan, RecurringRule, Transaction, TransactionBookmark
+from .models import (
+    Category,
+    DebtEntry,
+    Loan,
+    RecurringRule,
+    Transaction,
+    TransactionBookmark,
+    TransactionShare,
+)
 
 if TYPE_CHECKING:
     from apps.access.context import AccessContext
@@ -31,9 +39,10 @@ class TransactionFilter:
 
 
 def list_categories(ctx: AccessContext) -> QuerySet[Category]:
+    """With ``used`` = how many transactions are in each."""
     if not ctx.has("finance", "view"):
         return Category.objects.none()
-    return Category.objects.all().select_related("parent")
+    return Category.objects.select_related("parent").annotate(used=Count("transactions"))
 
 
 def list_transactions(
@@ -60,7 +69,10 @@ def list_transactions(
     if f.category_keys:
         qs = qs.filter(category__key__in=f.category_keys)
     if f.person_ids:
-        qs = qs.filter(person_id__in=f.person_ids)
+        # A split counts for each person in it.
+        qs = qs.filter(
+            Q(person_id__in=f.person_ids) | Q(shares__person_id__in=f.person_ids)
+        ).distinct()
     if f.kind:
         qs = qs.filter(category__kind=f.kind)
     return qs
@@ -78,7 +90,7 @@ MAX_CHART_MONTHS = 36
 
 
 def monthly_totals(
-    ctx: AccessContext, *, until: date | None = None, months: int = 12
+    ctx: AccessContext, *, until: date | None = None, months: int = 12, person: str | None = None
 ) -> list[MonthlySum]:
     """Totals grouped by (month, category.kind, currency) for the ``months``
     calendar months ending with ``until``'s month (default: the current one)."""
@@ -92,9 +104,29 @@ def monthly_totals(
     start = _month_start(until_idx - (months - 1))
     end = _month_start(until_idx + 1) - timedelta(days=1)
 
-    qs = list_transactions(ctx, TransactionFilter(date_from=start, date_to=end))
+    base = list_transactions(ctx, TransactionFilter(date_from=start, date_to=end))
+    if person and person != SHARED:
+        # Only this person's part of each transaction.
+        qs = (
+            TransactionShare.objects.filter(transaction__in=base, person_id=person)
+            .annotate(month=TruncMonth("transaction__date"))
+            .values("month", "transaction__category__kind", "transaction__currency")
+            .annotate(total=Sum("amount"))
+            .order_by("month")
+        )
+        return [
+            MonthlySum(
+                year_month=row["month"].strftime("%Y-%m"),
+                kind=row["transaction__category__kind"],
+                total=row["total"],
+                currency=row["transaction__currency"],
+            )
+            for row in qs
+        ]
+    if person == SHARED:
+        base = base.filter(shares__isnull=True)
     qs = (
-        qs.annotate(month=TruncMonth("date"))
+        base.annotate(month=TruncMonth("date"))
         .values("month", "category__kind", "currency")
         .annotate(total=Sum("amount"))
         .order_by("month")
@@ -110,6 +142,91 @@ def monthly_totals(
             )
         )
     return out
+
+
+SHARED = "shared"  # person filter: the household's (not split to anyone)
+
+
+@dataclass(slots=True)
+class Slice:
+    key: str
+    label: str
+    color: str
+    total: Decimal
+
+    def __post_init__(self) -> None:
+        self.total = Decimal(self.total).quantize(Decimal("0.01"))  # SQLite sums drop the cents
+
+
+def category_totals(
+    ctx: AccessContext,
+    *,
+    date_from: date,
+    date_to: date,
+    kind: str,
+    person: str | None = None,
+    currency: str = "PLN",
+) -> list[Slice]:
+    """Per category, biggest first — the whole amount, or one person's part
+    (``person`` = id) or only unsplit household spending (``"shared"``)."""
+    base = list_transactions(
+        ctx, TransactionFilter(date_from=date_from, date_to=date_to, kind=kind)
+    ).filter(currency=currency)
+    if person and person != SHARED:
+        rows = (
+            TransactionShare.objects.filter(transaction__in=base, person_id=person)
+            .values(
+                "transaction__category_id",
+                "transaction__category__name",
+                "transaction__category__color",
+            )
+            .annotate(total=Sum("amount"))
+        )
+        fields = (
+            "transaction__category_id",
+            "transaction__category__name",
+            "transaction__category__color",
+        )
+    else:
+        if person == SHARED:
+            base = base.filter(shares__isnull=True)
+        rows = base.values("category_id", "category__name", "category__color").annotate(
+            total=Sum("amount")
+        )
+        fields = ("category_id", "category__name", "category__color")
+    out = [Slice(str(r[fields[0]]), r[fields[1]], r[fields[2]], r["total"]) for r in rows]
+    return sorted(out, key=lambda s: -s.total)
+
+
+def person_totals(
+    ctx: AccessContext, *, date_from: date, date_to: date, kind: str, currency: str = "PLN"
+) -> list[Slice]:
+    """Who the money was for: each person's parts, plus the household's
+    unsplit share under ``"shared"``."""
+    from apps.people.models import Person  # noqa: PLC0415
+
+    base = list_transactions(
+        ctx, TransactionFilter(date_from=date_from, date_to=date_to, kind=kind)
+    ).filter(currency=currency)
+    rows = (
+        TransactionShare.objects.filter(transaction__in=base)
+        .values("person_id")
+        .annotate(total=Sum("amount"))
+    )
+    people = {p.id: p for p in Person.objects.filter(pk__in=[r["person_id"] for r in rows])}
+    out = [
+        Slice(
+            str(r["person_id"]),
+            people[r["person_id"]].display_name,
+            people[r["person_id"]].color,
+            r["total"],
+        )
+        for r in rows
+    ]
+    shared = base.filter(shares__isnull=True).aggregate(s=Sum("amount"))["s"]
+    if shared:
+        out.append(Slice(SHARED, "", "#868e96", shared))
+    return sorted(out, key=lambda s: -s.total)
 
 
 def _month_start(month_idx: int) -> date:

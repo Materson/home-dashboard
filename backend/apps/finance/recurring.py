@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, time
+from decimal import Decimal
 
 from dateutil.rrule import rrulestr
 from django.db import transaction as db_tx
 from django.utils import timezone
 
-from .models import RecurringRule, Transaction
+from .models import RecurringRule, Transaction, TransactionShare
 
 log = logging.getLogger(__name__)
 
@@ -40,11 +41,11 @@ def materialize_due(now: datetime | None = None) -> int:
             is_active=True, next_run_at__lte=today
         )
         for rule in qs:
-            created += _advance_rule(rule, today)
+            created += advance_rule(rule, today)
     return created
 
 
-def _advance_rule(rule: RecurringRule, today) -> int:
+def advance_rule(rule: RecurringRule, today) -> int:
     """Materialize one rule up to ``today``; advance ``next_run_at``."""
     rule_rrule = rrulestr(
         rule.rrule,
@@ -62,7 +63,7 @@ def _advance_rule(rule: RecurringRule, today) -> int:
             rule.next_run_at = occ_date
             rule.save(update_fields=["next_run_at", "updated_at"])
             return created
-        Transaction.objects.create(
+        tx = Transaction.objects.create(
             date=occ_date,
             amount=rule.amount,
             currency=rule.currency,
@@ -72,6 +73,14 @@ def _advance_rule(rule: RecurringRule, today) -> int:
             notes=rule.notes,
             recurring_rule=rule,
         )
+        TransactionShare.objects.bulk_create(
+            TransactionShare(transaction=tx, person_id=s["person_id"], amount=Decimal(s["amount"]))
+            for s in rule.shares
+        )
+        if not rule.shares and rule.person_id:
+            TransactionShare.objects.create(
+                transaction=tx, person_id=rule.person_id, amount=rule.amount
+            )
         created += 1
     # Rule exhausted (bounded RRULE with COUNT/UNTIL).
     rule.is_active = False

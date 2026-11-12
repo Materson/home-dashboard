@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActionIcon,
+  Avatar,
   Alert,
   Badge,
   Button,
@@ -10,13 +11,21 @@ import {
   Paper,
   Stack,
   Table,
+  Text,
   TextInput,
   Title,
   Tooltip,
 } from "@mantine/core";
 import { MonthPickerInput } from "@mantine/dates";
 import { notifications } from "@mantine/notifications";
-import { IconBookmarkPlus, IconCopy, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconBookmarkPlus,
+  IconCopy,
+  IconPencil,
+  IconPlus,
+  IconRepeat,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -27,7 +36,10 @@ import {
   type Transaction,
   type TransactionFilters,
 } from "./api";
+import { peopleApi } from "@/features/people/api";
+
 import { BookmarksBar } from "./BookmarksBar";
+import { RecurringModal } from "./RecurringModal";
 import { MonthlyChart } from "./MonthlyChart";
 import { TransactionModal, type TxModalMode, type TxModalSource } from "./TransactionModal";
 
@@ -46,7 +58,14 @@ export function FinancePage() {
     amount_min: string | undefined;
     amount_max: string | undefined;
     category_ids: string[];
-  }>({ q: "", amount_min: undefined, amount_max: undefined, category_ids: [] });
+    person_ids: string[];
+  }>({ q: "", amount_min: undefined, amount_max: undefined, category_ids: [], person_ids: [] });
+  const [recurringOpen, setRecurringOpen] = useState(false);
+  const people = useQuery({ queryKey: ["people"], queryFn: () => peopleApi.list() });
+  const peopleById = useMemo(
+    () => Object.fromEntries((people.data ?? []).map((p) => [p.id, p])),
+    [people.data],
+  );
 
   const [modalMode, setModalMode] = useState<TxModalMode>("new");
   const [modalSource, setModalSource] = useState<TxModalSource>(null);
@@ -75,6 +94,7 @@ export function FinancePage() {
       amount_min: search.amount_min,
       amount_max: search.amount_max,
       category_keys: category_keys.length ? category_keys : undefined,
+      person_ids: search.person_ids.length ? search.person_ids : undefined,
     };
   }, [month, search, categoriesById]);
 
@@ -140,6 +160,7 @@ export function FinancePage() {
         category_id: tx.category_id,
         person_id: tx.person_id,
         notes: tx.notes,
+        shares: tx.shares,
       }),
     onSuccess: (b) => {
       qc.invalidateQueries({ queryKey: ["finance", "bookmarks"] });
@@ -171,6 +192,9 @@ export function FinancePage() {
               value: (monthTotals.income - monthTotals.expense).toFixed(2),
             })}
           </Badge>
+          <Button variant="light" leftSection={<IconRepeat size={16} />} onClick={() => setRecurringOpen(true)}>
+            {t("finance.recurring.title")}
+          </Button>
           <Button leftSection={<IconPlus size={16} />} onClick={openNew}>
             {t("finance.tx.add")}
           </Button>
@@ -219,6 +243,14 @@ export function FinancePage() {
             clearable
             w={320}
           />
+          <MultiSelect
+            placeholder={t("finance.search.forWhom")}
+            data={(people.data ?? []).map((p) => ({ value: p.id, label: p.display_name }))}
+            value={search.person_ids}
+            onChange={(ids) => setSearch({ ...search, person_ids: ids })}
+            clearable
+            w={220}
+          />
         </Group>
 
         <Table striped highlightOnHover>
@@ -227,6 +259,7 @@ export function FinancePage() {
               <Table.Th>{t("finance.field.date")}</Table.Th>
               <Table.Th>{t("finance.field.name")}</Table.Th>
               <Table.Th>{t("finance.field.category")}</Table.Th>
+              <Table.Th>{t("finance.field.forWhom")}</Table.Th>
               <Table.Th ta="right">{t("finance.field.amount")}</Table.Th>
               <Table.Th />
             </Table.Tr>
@@ -237,8 +270,40 @@ export function FinancePage() {
               return (
                 <Table.Tr key={tx.id}>
                   <Table.Td>{tx.date}</Table.Td>
-                  <Table.Td>{tx.name}</Table.Td>
+                  <Table.Td>
+                    <Group gap={4} wrap="nowrap">
+                      {tx.recurring_rule_id && (
+                        <Tooltip label={t("finance.recurring.badge")}>
+                          <IconRepeat size={14} color="var(--mantine-color-dimmed)" />
+                        </Tooltip>
+                      )}
+                      {tx.name}
+                    </Group>
+                  </Table.Td>
                   <Table.Td>{cat?.name ?? tx.category_id.slice(0, 8)}</Table.Td>
+                  <Table.Td>
+                    {tx.shares.length ? (
+                      <Avatar.Group spacing={6}>
+                        {tx.shares.map((s) => {
+                          const p = peopleById[s.person_id];
+                          return (
+                            <Tooltip
+                              key={s.person_id}
+                              label={`${p?.display_name ?? "…"}${tx.shares.length > 1 ? ` · ${s.amount} ${tx.currency}` : ""}`}
+                            >
+                              <Avatar size="sm" radius="xl" color={p?.color} variant="filled">
+                                {(p?.display_name ?? "?").slice(0, 2).toUpperCase()}
+                              </Avatar>
+                            </Tooltip>
+                          );
+                        })}
+                      </Avatar.Group>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        {t("finance.field.forWhomShared")}
+                      </Text>
+                    )}
+                  </Table.Td>
                   <Table.Td ta="right" c={cat?.kind === "income" ? "teal" : undefined}>
                     {tx.amount} {tx.currency}
                   </Table.Td>
@@ -271,7 +336,7 @@ export function FinancePage() {
             })}
             {!transactionsQ.isLoading && !(transactionsQ.data ?? []).length && (
               <Table.Tr>
-                <Table.Td colSpan={5} ta="center" c="dimmed" py="md">
+                <Table.Td colSpan={6} ta="center" c="dimmed" py="md">
                   {t("finance.tx.empty")}
                 </Table.Td>
               </Table.Tr>
@@ -280,6 +345,12 @@ export function FinancePage() {
         </Table>
       </Paper>
 
+      <RecurringModal
+        opened={recurringOpen}
+        onClose={() => setRecurringOpen(false)}
+        categoriesById={categoriesById}
+        peopleById={peopleById}
+      />
       <TransactionModal
         opened={modalOpen}
         onClose={() => setModalOpen(false)}

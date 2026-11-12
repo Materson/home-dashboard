@@ -15,21 +15,28 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Button,
-  Checkbox,
+  Group,
   Modal,
+  Paper,
   Select,
   Stack,
   Tabs,
+  Text,
   TextInput,
 } from "@mantine/core";
 import { DatePickerInput } from "@mantine/dates";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
+import { isoDate, parseIsoDate } from "@/lib/format";
 
 import { cabinetApi } from "@/features/health/api";
 
-import { financeApi, type Category, type Transaction } from "./api";
+import { financeApi, type Category, type Repeat, type Transaction } from "./api";
+import { type Share, sharesValid } from "./shares";
+import { SharesEditor } from "./SharesEditor";
+
+const REPEATS: Repeat[] = ["", "weekly", "monthly", "quarterly", "yearly"];
 
 const MEDICINE_KIND = "health.cabinetitem";
 
@@ -61,7 +68,8 @@ export function TransactionModal(props: {
 
   const [kind, setKind] = useState<TxKind>(seedKind);
   const [form, setForm] = useState(() => buildInitial(mode, source, seedKind));
-  const [applyToFuture, setApplyToFuture] = useState(false);
+  // Editing one occurrence of a repeating payment: ask "only this / all following".
+  const [askScope, setAskScope] = useState(false);
 
   // Remount the form state whenever the modal transitions open / mode / source changes.
   useEffect(() => {
@@ -72,7 +80,7 @@ export function TransactionModal(props: {
         : "expense";
     setKind(nextKind);
     setForm(buildInitial(mode, source, nextKind));
-    setApplyToFuture(false);
+    setAskScope(false);
   }, [opened, mode, source, categoriesById]);
 
   // Health purchases (e.g. medicines bought at the pharmacy) can be linked to
@@ -104,13 +112,20 @@ export function TransactionModal(props: {
     },
   });
   const update = useMutation({
-    mutationFn: () =>
-      financeApi.updateTransaction(source!.id, { ...form, update_future: applyToFuture }),
+    mutationFn: (future: boolean) =>
+      financeApi.updateTransaction(source!.id, {
+        ...form,
+        repeat: "",
+        repeat_until: null,
+        update_future: future,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["finance"] });
       onClose();
     },
   });
+
+  const saveError = (create.error ?? update.error) as Error | null;
 
   const title = t(
     mode === "edit" ? "finance.tx.edit" : mode === "duplicate" ? "finance.tx.duplicate" : "finance.tx.add",
@@ -119,9 +134,11 @@ export function TransactionModal(props: {
   const isRecurring = mode === "edit" && !!source?.recurring_rule_id;
 
   function save() {
-    if (mode === "edit") update.mutate();
-    else create.mutate();
+    if (mode !== "edit") create.mutate();
+    else if (isRecurring) setAskScope(true);
+    else update.mutate(false);
   }
+  const startsInPast = mode !== "edit" && !!form.repeat && form.date < isoDate(new Date());
 
   function renderForm() {
     return (
@@ -146,8 +163,9 @@ export function TransactionModal(props: {
         />
         <DatePickerInput
           label={t("finance.field.date")}
-          value={new Date(form.date)}
-          onChange={(d) => setForm({ ...form, date: (d ?? new Date()).toISOString().slice(0, 10) })}
+          value={parseIsoDate(form.date)}
+          // Local date — toISOString() would be the previous day in Poland (UTC+1/+2).
+          onChange={(d) => setForm({ ...form, date: isoDate(d ?? new Date()) })}
         />
         <Select
           label={t("finance.field.category")}
@@ -175,22 +193,80 @@ export function TransactionModal(props: {
             clearable
           />
         )}
+        <SharesEditor
+          amount={form.amount}
+          currency={form.currency}
+          value={form.shares}
+          onChange={(shares) => setForm((f) => ({ ...f, shares }))}
+        />
+        {mode !== "edit" && (
+          <Group grow align="flex-start">
+            <Select
+              label={t("finance.field.repeat")}
+              allowDeselect={false}
+              data={REPEATS.map((r) => ({ value: r, label: t(`finance.repeat.${r || "none"}`) }))}
+              value={form.repeat}
+              onChange={(v) => setForm((f) => ({ ...f, repeat: (v ?? "") as Repeat }))}
+            />
+            {form.repeat && (
+              <DatePickerInput
+                label={t("finance.field.repeatUntil")}
+                placeholder={t("finance.field.repeatForever")}
+                clearable
+                value={form.repeat_until ? parseIsoDate(form.repeat_until) : null}
+                onChange={(d) => setForm((f) => ({ ...f, repeat_until: d ? isoDate(d) : null }))}
+              />
+            )}
+          </Group>
+        )}
+        {startsInPast && (
+          <Text size="xs" c="dimmed">
+            {t("finance.recurring.backfillHint")}
+          </Text>
+        )}
         <TextInput
           label={t("finance.field.notes")}
           value={form.notes}
           onChange={(e) => setForm({ ...form, notes: e.currentTarget.value })}
         />
-        {isRecurring && (
-          <Checkbox
-            label={t("finance.recurring.applyFuture")}
-            checked={applyToFuture}
-            onChange={(e) => setApplyToFuture(e.currentTarget.checked)}
-          />
+        {saveError && (
+          <Text size="sm" c="red">
+            {t("common.saveFailed")}
+          </Text>
         )}
-        <Button onClick={save} loading={saving} disabled={!form.category_id || !form.name || !isPositiveAmount(form.amount)}
+        {askScope ? (
+          <Paper withBorder p="sm" bg="var(--mantine-color-blue-light)">
+            <Stack gap="xs">
+              <Text size="sm" fw={500}>
+                {t("finance.recurring.scopeQuestion")}
+              </Text>
+              <Group gap="xs">
+                <Button size="xs" variant="default" loading={update.isPending && update.variables === false} onClick={() => update.mutate(false)}>
+                  {t("finance.recurring.onlyThis")}
+                </Button>
+                <Button size="xs" loading={update.isPending && update.variables === true} onClick={() => update.mutate(true)}>
+                  {t("finance.recurring.thisAndFollowing")}
+                </Button>
+                <Button size="xs" variant="subtle" color="gray" onClick={() => setAskScope(false)}>
+                  {t("notes.cancel")}
+                </Button>
+              </Group>
+            </Stack>
+          </Paper>
+        ) : (
+        <Button
+          onClick={save}
+          loading={saving}
+          disabled={
+            !form.category_id ||
+            !form.name ||
+            !isPositiveAmount(form.amount) ||
+            !sharesValid(form.amount, form.shares)
+          }
         >
           {t(mode === "edit" ? "finance.action.saveChanges" : "finance.action.save")}
         </Button>
+        )}
       </Stack>
     );
   }
@@ -205,9 +281,11 @@ export function TransactionModal(props: {
           <Tabs.Tab value="income" color="teal">
             {t("finance.kind.income")}
           </Tabs.Tab>
-          <Tabs.Tab value="transfer" color="gray">
-            {t("finance.kind.transfer")}
-          </Tabs.Tab>
+          {kind === "transfer" && (
+            <Tabs.Tab value="transfer" color="gray">
+              {t("finance.kind.transfer")}
+            </Tabs.Tab>
+          )}
         </Tabs.List>
 
         <Tabs.Panel value="expense">{renderForm()}</Tabs.Panel>
@@ -219,7 +297,7 @@ export function TransactionModal(props: {
 }
 
 function buildInitial(mode: TxModalMode, source: TxModalSource, _kind: TxKind) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = isoDate(new Date());
   if (mode === "new" || !source) {
     return {
       date: today,
@@ -231,6 +309,9 @@ function buildInitial(mode: TxModalMode, source: TxModalSource, _kind: TxKind) {
       notes: "",
       related_kind: "",
       related_id: null as string | null,
+      shares: [] as Share[],
+      repeat: "" as Repeat,
+      repeat_until: null as string | null,
     };
   }
   return {
@@ -244,5 +325,14 @@ function buildInitial(mode: TxModalMode, source: TxModalSource, _kind: TxKind) {
     related_id: source.related_id ?? null,
     name: source.name,
     notes: source.notes,
+    // Older entries (and bookmarks) may only name one person.
+    shares:
+      source.shares?.length
+        ? source.shares
+        : source.person_id
+          ? [{ person_id: source.person_id, amount: source.amount }]
+          : [],
+    repeat: "" as Repeat,
+    repeat_until: null as string | null,
   };
 }
