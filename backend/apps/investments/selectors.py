@@ -12,12 +12,13 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.http import Http404
 from django.utils import timezone
 
-from . import bonds, deposits
+from . import bonds, deposits, prices
 from .models import Asset, InflationIndex, Lot
 
 if TYPE_CHECKING:
@@ -82,6 +83,50 @@ def family_users(ctx: AccessContext) -> list:
 
 def cpi_table() -> dict[tuple[int, int], Decimal]:
     return {(r.year, r.month): r.index for r in InflationIndex.objects.all()}
+
+
+# Values are kept in PLN; these can be picked to show them in instead.
+DISPLAY_CURRENCIES = ("USD", "EUR")
+FX_CACHE_KEY = "investments:fx"
+FX_CACHE_S = 3 * 3600
+
+
+# Purchases and sales may be entered in these (kept in PLN as well).
+TRADE_CURRENCIES = ("PLN", "USD", "EUR", "GBP", "CHF")
+RATE_CACHE_S = 24 * 3600
+
+
+def rate_before(currency: str, day: date) -> tuple[date, Decimal]:
+    """NBP's rate for a purchase / sale on ``day`` and the day it's from
+    (cached; ``prices.PriceError`` when NBP can't say)."""
+    key = f"investments:rate:{currency}:{day.isoformat()}"
+    found = cache.get(key)
+    if found is None:
+        found = prices.nbp_rate_before(currency, day)
+        cache.set(key, found, RATE_CACHE_S)
+    return found
+
+
+def trade_rate(ctx: AccessContext, currency: str, day: date) -> dict:
+    """The rate a purchase / sale in ``currency`` on ``day`` is converted at."""
+    require(ctx)
+    if currency not in TRADE_CURRENCIES or currency == "PLN":
+        raise ValueError(f"currency must be one of {TRADE_CURRENCIES[1:]}")
+    rate_date, rate = rate_before(currency, day)
+    return {"currency": currency, "on": day, "rate_date": rate_date, "rate": rate}
+
+
+def fx_rates(ctx: AccessContext) -> dict:
+    """The latest NBP rates for showing values in USD / EUR:
+    ``{"date": day, "rates": {"USD": PLN for 1 USD, ...}}``. Cached a few
+    hours; raises ``prices.PriceError`` when NBP can't be reached."""
+    require(ctx)
+    found = cache.get(FX_CACHE_KEY)
+    if found is None:
+        day, rates = prices.nbp_latest()
+        found = {"date": day, "rates": {c: rates[c] for c in DISPLAY_CURRENCIES if c in rates}}
+        cache.set(FX_CACHE_KEY, found, FX_CACHE_S)
+    return found
 
 
 # ---------------- valuation ----------------
@@ -179,6 +224,58 @@ def summary(asset: Asset, cpi: dict, today: date | None = None) -> Summary:
     s.realized = s.realized.quantize(CENT)
     s.price_date = pricer.on(today)[1]
     return s
+
+
+@dataclass
+class PeriodGain:
+    gain: Decimal = Decimal(0)
+    # What the gain is measured against: the value at the start, plus what
+    # was paid for purchases made during the period.
+    base: Decimal = Decimal(0)
+
+    @property
+    def gain_pct(self) -> Decimal | None:
+        return (self.gain / self.base * 100).quantize(Decimal("0.1")) if self.base else None
+
+
+def _coupons(asset: Asset, lot: Lot, cpi: dict, start: date, stop: date) -> Decimal:
+    """Bond interest paid out to the account between ``start`` and ``stop``."""
+    if asset.kind != Asset.Kind.BOND or asset.bond_type not in bonds.TYPES:
+        return Decimal(0)
+    terms = (asset.bond_type, lot.bought_on, asset.bond_first_rate or Decimal(0), asset.bond_margin)
+    paid = lambda on: bonds.paid_out(*terms, cpi, on, lot.rate_overrides)  # noqa: E731
+    return lot.quantity * (paid(stop) - paid(start))
+
+
+def period_gain(
+    asset: Asset, cpi: dict, start: date, end: date, *, open_only: bool = False
+) -> PeriodGain:
+    """What an asset earned between ``start`` and ``end``: per purchase, its
+    value at the end (or what it was sold for) minus its value at the start
+    (or what was paid, if bought later), plus bond interest paid out meanwhile.
+    ``open_only`` leaves out purchases already sold."""
+    pricer = Pricer(asset)
+    out = PeriodGain()
+    for lot in asset.lots.all():
+        sold_by_end = lot.sold_on is not None and lot.sold_on <= end
+        if open_only and lot.sold_on:
+            continue
+        if lot.bought_on > end or (lot.sold_on and lot.sold_on <= start):
+            continue  # not held during the period
+        if lot.bought_on < start:
+            begin, _ = lot_value(asset, lot, start, pricer, cpi)
+        else:
+            begin = lot.price_total
+        if sold_by_end:
+            finish = lot.sold_amount or Decimal(0)
+        else:
+            finish, _ = lot_value(asset, lot, end, pricer, cpi)
+        stop = lot.sold_on if sold_by_end else end
+        out.gain += finish + _coupons(asset, lot, cpi, start, stop) - begin
+        out.base += begin
+    out.gain = out.gain.quantize(CENT)
+    out.base = out.base.quantize(CENT)
+    return out
 
 
 def bond_schedule(asset: Asset, lot: Lot, cpi: dict) -> list[dict]:

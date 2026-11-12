@@ -3,7 +3,9 @@
 - ``Asset``: one kind of holding — a gold coin type, a cryptocurrency, a
   stock/ETF, a treasury bond series, or anything else valued by hand.
 - ``Lot``: one purchase of it — date, quantity (fractions allowed: 0.1 oz,
-  0.05 BTC, 30 bonds) and what was paid; optionally sold later.
+  0.05 BTC, 30 bonds) and what was paid; optionally sold later. Amounts are
+  in PLN; one paid / received in another currency also keeps that amount and
+  the rate it was converted at.
 - ``PriceSnapshot``: the price of one unit of an asset on a day (NBP gold,
   CoinGecko crypto, or entered by hand). Bonds aren't priced — their value
   is computed from the bond's rules and ``InflationIndex`` (see ``bonds``).
@@ -99,6 +101,14 @@ class Lot(UUIDModel, TimeStamped):
     price_total = money_amount_field(help_text="What was paid for the whole lot (PLN).")
     sold_on = models.DateField(null=True, blank=True)
     sold_amount = money_amount_field(null=True, blank=True, help_text="What it was sold for.")
+    # Paid / received in another currency: that amount and the PLN rate used
+    # (NBP's from the last working day before, or the broker's own).
+    price_currency = models.CharField(max_length=3, default="PLN")
+    price_foreign = money_amount_field(null=True, blank=True)
+    price_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    sold_currency = models.CharField(max_length=3, default="PLN")
+    sold_foreign = money_amount_field(null=True, blank=True)
+    sold_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
     # Bonds: a period's rate as the bank shows it, if it differs from ours
     # ({"2": "6.10"} = the 2nd year). Periods count from 1.
     rate_overrides = models.JSONField(default=dict, blank=True)

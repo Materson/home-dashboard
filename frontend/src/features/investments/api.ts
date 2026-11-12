@@ -6,13 +6,23 @@ export type Share = { user_id: number; name: string; can_edit: boolean };
 export type FamilyUser = { user_id: number; name: string };
 export type Unit = "oz" | "g" | "pcs";
 
+/** Purchases and sales may be entered in these (kept in PLN as well). */
+export type TradeCurrency = "PLN" | "USD" | "EUR" | "GBP" | "CHF";
+
 export type Lot = {
   id: string;
   bought_on: string;
   quantity: string;
+  /** PLN, always; paid in another currency: that amount and the rate used. */
   price_total: string;
+  price_currency: TradeCurrency;
+  price_foreign: string | null;
+  price_rate: string | null;
   sold_on: string | null;
   sold_amount: string | null;
+  sold_currency: TradeCurrency;
+  sold_foreign: string | null;
+  sold_rate: string | null;
   rate_overrides: Record<string, string>;
   notes: string;
 };
@@ -56,6 +66,11 @@ export type Asset = AssetInput & {
 
 export type Point = { date: string; value: string; cost: string };
 
+/** Values are kept in PLN; USD / EUR are shown at the latest NBP rate. */
+export type Currency = "PLN" | "USD" | "EUR";
+/** NBP table A of ``date``: PLN for 1 USD / 1 EUR. */
+export type Fx = { date: string; rates: Partial<Record<Currency, string>> };
+
 export type Portfolio = {
   value: string;
   cost: string;
@@ -64,7 +79,14 @@ export type Portfolio = {
   realized: string;
   by_kind: Partial<Record<AssetKind, string>>;
   series: Point[];
+  /** With a date range: what was earned in it (in total and per asset id). */
+  period: PeriodGains | null;
 };
+
+export type Gain = { gain: string; gain_pct: string | null };
+/** Per purchase: value at ``end`` (or sold for) minus value at ``start`` (or
+ *  paid, if bought later), plus bond interest paid out; % of that base. */
+export type PeriodGains = Gain & { start: string; end: string; assets: Record<string, Gain> };
 
 export type Period = {
   number: number;
@@ -78,7 +100,26 @@ export type Period = {
 export type Inflation = { year: number; month: number; index: string; manual: boolean };
 export type BondType = { code: string; months: number; indexed: boolean; floating: boolean; capitalised: boolean };
 
-export type LotInput = { bought_on: string; quantity: string; price_total: string; notes?: string };
+/** Paid in PLN (``price_total``), or in another currency: ``price_foreign``
+ *  at ``price_rate`` (PLN for 1 unit; null = NBP's for the day before). */
+export type LotInput = {
+  bought_on: string;
+  quantity: string;
+  price_total?: string;
+  price_currency?: TradeCurrency;
+  price_foreign?: string | null;
+  price_rate?: string | null;
+  notes?: string;
+};
+/** Received in PLN (``sold_amount``), or ``sold_foreign`` at ``sold_rate``. */
+export type SaleMoney = {
+  sold_amount?: string;
+  sold_currency?: TradeCurrency;
+  sold_foreign?: string | null;
+  sold_rate?: string | null;
+};
+/** The NBP rate a purchase / sale on ``on`` is converted at (from ``rate_date``). */
+export type TradeRate = { currency: TradeCurrency; on: string; rate_date: string; rate: string };
 
 function csrf(): string {
   return document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
@@ -111,8 +152,12 @@ export const investmentsApi = {
   addLot: (assetId: string, body: LotInput) => call<Lot>(`/assets/${assetId}/lots`, json("POST", body)),
   updateLot: (id: string, body: LotInput) => call<Lot>(`/lots/${id}`, json("PUT", body)),
   deleteLot: (id: string) => call<{ deleted: boolean }>(`/lots/${id}`, { method: "DELETE" }),
-  sellLot: (id: string, body: { sold_on: string; sold_amount: string }) =>
+  /** All of a purchase, or ``quantity`` of it (split off as its own lot). */
+  sellLot: (id: string, body: { sold_on: string; quantity?: string } & SaleMoney) =>
     call<Lot>(`/lots/${id}/sell`, json("POST", body)),
+  /** ``quantity`` of what's held, oldest purchases first; returns the sold lots. */
+  sellAsset: (assetId: string, body: { sold_on: string; quantity: string } & SaleMoney) =>
+    call<Lot[]>(`/assets/${assetId}/sell`, json("POST", body)),
   periods: (lotId: string) => call<Period[]>(`/lots/${lotId}/periods`),
   overrideRate: (lotId: string, period: number, rate: string | null) =>
     call<Lot>(`/lots/${lotId}/periods/${period}`, json("PUT", { rate })),
@@ -133,6 +178,8 @@ export const investmentsApi = {
   addInflation: (body: { year: number; month: number; index: string }) =>
     call<Inflation>("/inflation", json("POST", body)),
   bondTypes: () => call<BondType[]>("/bond-types"),
+  fx: () => call<Fx>("/fx"),
+  fxRate: (currency: TradeCurrency, on: string) => call<TradeRate>(`/fx-rate?currency=${currency}&on=${on}`),
 };
 
 export const INVESTMENTS_KEY = ["investments"];

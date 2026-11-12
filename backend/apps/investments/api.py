@@ -15,12 +15,13 @@ from ninja import Router, Schema
 
 from apps.access.context import get_ctx
 
-from . import bonds, selectors, services
+from . import bonds, prices, selectors, services
 from .models import Asset, InflationIndex, Lot
 
 router = Router()
 
 Kind = Literal["gold", "silver", "crypto", "stock", "bond", "other"]
+TradeCurrency = Literal["PLN", "USD", "EUR", "GBP", "CHF"]
 
 
 class AssetIn(Schema):
@@ -45,6 +46,12 @@ class LotOut(Schema):
     price_total: Decimal
     sold_on: date | None
     sold_amount: Decimal | None
+    price_currency: str
+    price_foreign: Decimal | None
+    price_rate: Decimal | None
+    sold_currency: str
+    sold_foreign: Decimal | None
+    sold_rate: Decimal | None
     rate_overrides: dict
     notes: str
 
@@ -178,7 +185,10 @@ def people(request: HttpRequest) -> list[dict]:
 class LotIn(Schema):
     bought_on: date
     quantity: Decimal
-    price_total: Decimal
+    price_total: Decimal | None = None  # PLN (computed when paid in another currency)
+    price_currency: TradeCurrency = "PLN"
+    price_foreign: Decimal | None = None  # what was paid in that currency
+    price_rate: Decimal | None = None  # PLN for 1 unit of it; empty = NBP's
     notes: str = ""
 
 
@@ -206,13 +216,35 @@ def delete_lot(request: HttpRequest, lot_id: UUID) -> dict[str, bool]:
 
 class SellIn(Schema):
     sold_on: date
-    sold_amount: Decimal
+    sold_amount: Decimal | None = None  # PLN, or:
+    sold_currency: TradeCurrency = "PLN"
+    sold_foreign: Decimal | None = None  # what was received in that currency
+    sold_rate: Decimal | None = None  # PLN for 1 unit of it; empty = NBP's
+    quantity: Decimal | None = None  # part of the purchase; empty = all of it
 
 
 @router.post("/lots/{lot_id}/sell", response={200: LotOut, 422: dict})
 def sell_lot(request: HttpRequest, lot_id: UUID, payload: SellIn):
     try:
         return services.sell_lot(get_ctx(request), lot_id, **payload.dict())
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+class SellAssetIn(Schema):
+    sold_on: date
+    quantity: Decimal
+    sold_amount: Decimal | None = None
+    sold_currency: TradeCurrency = "PLN"
+    sold_foreign: Decimal | None = None
+    sold_rate: Decimal | None = None
+
+
+@router.post("/assets/{asset_id}/sell", response={200: list[LotOut], 422: dict})
+def sell_asset(request: HttpRequest, asset_id: UUID, payload: SellAssetIn):
+    """Sell part (or all) of what's held, oldest purchases first."""
+    try:
+        return services.sell_asset(get_ctx(request), asset_id, **payload.dict())
     except ValueError as exc:
         return 422, {"detail": str(exc)}
 
@@ -277,6 +309,19 @@ def asset_series(request: HttpRequest, asset_id: UUID, months: int | None = None
     return selectors.series([asset], selectors.cpi_table(), start=_start(months))
 
 
+class GainOut(Schema):
+    gain: Decimal
+    gain_pct: Decimal | None
+
+
+class PeriodOut(GainOut):
+    """What was earned between ``start`` and ``end`` (in total and per asset id)."""
+
+    start: date
+    end: date
+    assets: dict[str, GainOut]
+
+
 class PortfolioOut(Schema):
     value: Decimal
     cost: Decimal
@@ -285,6 +330,7 @@ class PortfolioOut(Schema):
     realized: Decimal
     by_kind: dict[str, Decimal]
     series: list[PointOut]
+    period: PeriodOut | None  # only when a range is chosen
 
 
 @router.get("/portfolio", response=PortfolioOut)
@@ -297,9 +343,11 @@ def portfolio(  # noqa: PLR0917 — query parameters
     open_only: bool = False,
 ) -> dict[str, Any]:
     """Everything held (or one kind): totals, value per kind, and the value
-    over time — the last ``months``, or ``date_from``..``date_to``."""
+    over time — the last ``months``, or ``date_from``..``date_to`` (and then
+    also what was earned in that period)."""
     assets = list(selectors.list_assets(get_ctx(request), kind=kind))
     cpi = selectors.cpi_table()
+    start = date_from or _start(months)
     by_kind: dict[str, Decimal] = defaultdict(Decimal)
     totals = defaultdict(Decimal)
     for a in assets:
@@ -310,10 +358,60 @@ def portfolio(  # noqa: PLR0917 — query parameters
     return {
         **{k: totals[k] for k in ("value", "cost", "gain", "paid_out", "realized")},
         "by_kind": dict(by_kind),
-        "series": selectors.series(
-            assets, cpi, start=date_from or _start(months), end=date_to, open_only=open_only
-        ),
+        "series": selectors.series(assets, cpi, start=start, end=date_to, open_only=open_only),
+        "period": _period(assets, cpi, start, date_to, open_only=open_only) if start else None,
     }
+
+
+def _period(
+    assets: list[Asset], cpi: dict, start: date, end: date | None, *, open_only: bool
+) -> dict[str, Any]:
+    end = end or timezone.localdate()
+    total = selectors.PeriodGain()
+    per_asset = {}
+    for a in assets:
+        g = selectors.period_gain(a, cpi, start, end, open_only=open_only)
+        per_asset[str(a.id)] = {"gain": g.gain, "gain_pct": g.gain_pct}
+        total.gain += g.gain
+        total.base += g.base
+    return {
+        "start": start,
+        "end": end,
+        "gain": total.gain,
+        "gain_pct": total.gain_pct,
+        "assets": per_asset,
+    }
+
+
+class FxOut(Schema):
+    date: date
+    rates: dict[str, Decimal]
+
+
+@router.get("/fx", response={200: FxOut, 422: dict})
+def fx(request: HttpRequest):
+    """NBP rates (PLN for 1 USD / EUR) to show the values in another currency."""
+    try:
+        return selectors.fx_rates(get_ctx(request))
+    except prices.PriceError:
+        return 422, {"detail": "NBP rates unavailable"}
+
+
+class TradeRateOut(Schema):
+    currency: str
+    on: date
+    rate_date: date
+    rate: Decimal
+
+
+@router.get("/fx-rate", response={200: TradeRateOut, 422: dict})
+def fx_rate(request: HttpRequest, currency: TradeCurrency, on: date):
+    """The NBP rate a purchase / sale in ``currency`` on ``on`` is converted
+    at: the last working day's before it."""
+    try:
+        return selectors.trade_rate(get_ctx(request), currency, on)
+    except (ValueError, prices.PriceError):
+        return 422, {"detail": "NBP rate unavailable"}
 
 
 @router.post("/refresh", response=dict)

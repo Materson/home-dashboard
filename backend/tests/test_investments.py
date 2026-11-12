@@ -456,3 +456,297 @@ def test_stock_and_silver_are_priced_from_yahoo(fin, monkeypatch):
     assert selectors.summary(selectors.get_asset(fin["ctx"], etf.id), {}).value == D("6400.00")
     # one troy ounce of silver at 50 USD x 4 PLN
     assert selectors.summary(selectors.get_asset(fin["ctx"], silver.id), {}).value == D("200.00")
+
+
+def test_parse_nbp_table():
+    day, rates = prices.parse_nbp_table(
+        [
+            {
+                "table": "A",
+                "effectiveDate": "2026-11-12",
+                "rates": [{"code": "USD", "mid": 3.6512}, {"code": "EUR", "mid": 4.2511}],
+            }
+        ]
+    )
+    assert (day, rates["USD"], rates["EUR"]) == (date(2026, 11, 12), D("3.6512"), D("4.2511"))
+    with pytest.raises(prices.PriceError):
+        prices.parse_nbp_table([])
+
+
+def test_fx_rates_for_showing_values_in_usd_or_eur(client, fin, monkeypatch):
+    from django.core.cache import cache  # noqa: PLC0415
+
+    cache.delete(selectors.FX_CACHE_KEY)
+    calls = []
+
+    def latest():
+        calls.append(1)
+        return date(2026, 11, 12), {"USD": D("3.65"), "EUR": D("4.25"), "CHF": D("4.6")}
+
+    monkeypatch.setattr(prices, "nbp_latest", latest)
+    client.force_login(fin["viewer_user"])
+    body = client.get("/api/investments/fx").json()
+    assert body == {"date": "2026-11-12", "rates": {"USD": "3.65", "EUR": "4.25"}}
+    client.get("/api/investments/fx")
+    assert len(calls) == 1  # cached
+    with pytest.raises(PermissionDenied):  # no finance, no rates
+        selectors.fx_rates(fin["outsider"])
+
+    cache.delete(selectors.FX_CACHE_KEY)
+
+    def down():
+        raise prices.PriceError("NBP down")
+
+    monkeypatch.setattr(prices, "nbp_latest", down)
+    assert client.get("/api/investments/fx").status_code == 422
+    cache.delete(selectors.FX_CACHE_KEY)
+
+
+def test_selling_part_of_a_purchase_splits_it(fin):
+    today = timezone.localdate()
+    btc = asset(fin, name="BTC", kind="crypto", symbol="bitcoin")
+    bought = lot(fin, btc, "0.3", "30000", today - timedelta(days=100))
+    sold = services.sell_lot(
+        fin["ctx"], bought.id, sold_on=today, sold_amount=D("15000"), quantity=D("0.1")
+    )
+    bought.refresh_from_db()
+    assert (sold.quantity, sold.price_total, sold.sold_amount) == (D("0.1"), D("10000"), D("15000"))
+    assert (sold.bought_on, sold.sold_on) == (bought.bought_on, today)
+    assert (bought.quantity, bought.price_total, bought.sold_on) == (D("0.2"), D("20000"), None)
+    s = selectors.summary(selectors.get_asset(fin["ctx"], btc.id), {})
+    assert (s.quantity, s.cost, s.realized) == (D("0.2"), D("20000"), D("5000"))
+
+    # all of what's left: no split; more than held, or a sold lot's part: refused
+    with pytest.raises(ValueError, match="more than"):
+        services.sell_lot(fin["ctx"], bought.id, sold_on=today, sold_amount=D("1"), quantity=D("1"))
+    with pytest.raises(ValueError, match="already sold"):
+        services.sell_lot(
+            fin["ctx"], sold.id, sold_on=today, sold_amount=D("1"), quantity=D("0.05")
+        )
+    with pytest.raises(ValueError, match="future"):
+        services.sell_lot(
+            fin["ctx"], bought.id, sold_on=today + timedelta(days=1), sold_amount=D("1")
+        )
+    whole = services.sell_lot(fin["ctx"], bought.id, sold_on=today, sold_amount=D("31000"))
+    assert whole.id == bought.id and btc.lots.count() == 2
+    with pytest.raises(PermissionDenied):  # view-only: no selling
+        services.sell_lot(fin["viewer"], bought.id, sold_on=today, sold_amount=D("1"))
+
+
+def test_selling_part_of_a_holding_takes_the_oldest_purchases_first(fin):
+    today = timezone.localdate()
+    gold = asset(fin, name="Krugerrand", kind="gold", unit="oz")
+    first = lot(fin, gold, "2", "16000", today - timedelta(days=300))
+    second = lot(fin, gold, "3", "30000", today - timedelta(days=100))
+    sold = services.sell_asset(
+        fin["ctx"], gold.id, sold_on=today, quantity=D("3"), sold_amount=D("33333.33")
+    )
+    # all of the first purchase, 1 oz split off the second; the money shared by ounces
+    assert [(x.quantity, x.price_total, x.sold_amount) for x in sold] == [
+        (D("2"), D("16000"), D("22222.22")),
+        (D("1"), D("10000"), D("11111.11")),
+    ]
+    assert sold[0].id == first.id
+    second.refresh_from_db()
+    assert (second.quantity, second.price_total, second.sold_on) == (D("2"), D("20000"), None)
+    with pytest.raises(ValueError, match="more than"):
+        services.sell_asset(
+            fin["ctx"], gold.id, sold_on=today, quantity=D("2.5"), sold_amount=D("1")
+        )
+    with pytest.raises(Http404):  # someone else's investment
+        services.sell_asset(
+            fin["spouse"], gold.id, sold_on=today, quantity=D("1"), sold_amount=D("1")
+        )
+
+
+def test_bonds_are_sold_whole_and_the_api_sells_part(client, fin):
+    today = timezone.localdate()
+    tos = asset(fin, name="TOS", kind="bond", bond_type="TOS", bond_first_rate=D("4.40"))
+    bonds_lot = lot(fin, tos, "10", "1000", today - timedelta(days=30))
+    with pytest.raises(ValueError, match="whole"):
+        services.sell_lot(
+            fin["ctx"], bonds_lot.id, sold_on=today, sold_amount=D("1"), quantity=D("2.5")
+        )
+    client.force_login(fin["user"])
+    resp = client.post(
+        f"/api/investments/lots/{bonds_lot.id}/sell",
+        {"sold_on": str(today), "sold_amount": "401.20", "quantity": "4"},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, resp.content
+    assert (D(resp.json()["quantity"]), D(resp.json()["price_total"])) == (D("4"), D("400"))
+    resp = client.post(
+        f"/api/investments/assets/{tos.id}/sell",
+        {"sold_on": str(today), "sold_amount": "100", "quantity": "7"},
+        content_type="application/json",
+    )
+    assert resp.status_code == 422  # only 6 left
+    resp = client.post(
+        f"/api/investments/assets/{tos.id}/sell",
+        {"sold_on": str(today), "sold_amount": "601.80", "quantity": "6"},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200 and [D(x["quantity"]) for x in resp.json()] == [D("6")]
+
+
+def test_purchases_and_sales_in_another_currency(client, fin, monkeypatch):
+    from django.core.cache import cache  # noqa: PLC0415
+
+    cache.clear()
+    today = timezone.localdate()
+    day = today - timedelta(days=30)
+    # NBP has a rate for the day itself, but a purchase uses the one before.
+    rates = {day - timedelta(days=3): D("3.90"), day - timedelta(days=1): D("4.00"), day: D("9")}
+    asked = []
+
+    def nbp_fx(code, start, end):
+        asked.append(code)
+        return {d: r for d, r in rates.items() if start <= d <= end}
+
+    monkeypatch.setattr(prices, "nbp_fx", nbp_fx)
+    etf = asset(fin, name="S&P 500", kind="stock")
+    bought = services.save_lot(
+        fin["ctx"],
+        {"bought_on": day, "quantity": D("2"), "price_currency": "USD", "price_foreign": D("1000")},
+        asset_id=etf.id,
+    )
+    assert (bought.price_total, bought.price_rate, asked) == (D("4000.00"), D("4.00"), ["USD"])
+    # the broker's own rate wins; back to PLN drops the foreign amount
+    own = services.save_lot(
+        fin["ctx"],
+        {
+            "bought_on": day,
+            "quantity": D("1"),
+            "price_currency": "EUR",
+            "price_foreign": D("100"),
+            "price_rate": D("4.3"),
+        },
+        asset_id=etf.id,
+    )
+    assert own.price_total == D("430.00")
+    pln = services.save_lot(
+        fin["ctx"], {"price_currency": "PLN", "price_total": D("420")}, lot_id=own.id
+    )
+    assert (pln.price_total, pln.price_foreign, pln.price_rate) == (D("420"), None, None)
+
+    # sell 1 of the 2 for 600 USD at 4.10: split with half the dollars
+    sold = services.sell_lot(
+        fin["ctx"],
+        bought.id,
+        sold_on=today,
+        quantity=D("1"),
+        sold_currency="USD",
+        sold_foreign=D("600"),
+        sold_rate=D("4.10"),
+    )
+    assert (sold.sold_amount, sold.sold_foreign, sold.sold_rate) == (
+        D("2460.00"),
+        D("600"),
+        D("4.10"),
+    )
+    assert (sold.price_total, sold.price_foreign, sold.price_currency) == (
+        D("2000.00"),
+        D("500.00"),
+        "USD",
+    )
+    bought.refresh_from_db()
+    assert (bought.price_total, bought.price_foreign) == (D("2000.00"), D("500.00"))
+
+    # FIFO across two purchases: dollars and zlotys shared by quantity
+    parts = services.sell_asset(
+        fin["ctx"],
+        etf.id,
+        sold_on=today,
+        quantity=D("2"),
+        sold_currency="USD",
+        sold_foreign=D("1000.01"),
+        sold_rate=D("4"),
+    )
+    assert [(p.sold_foreign, p.sold_amount) for p in parts] == [
+        (D("500.00"), D("2000.02")),  # 500.005 rounds half-even
+        (D("500.01"), D("2000.02")),  # the last part gets the rest: nothing lost
+    ]
+
+    # NBP unreachable and no rate given: ask for one
+    monkeypatch.setattr(prices, "nbp_fx", lambda *a: {})
+    with pytest.raises(ValueError, match="enter the rate"):
+        services.save_lot(
+            fin["ctx"],
+            {
+                "bought_on": day - timedelta(days=100),
+                "quantity": D("1"),
+                "price_currency": "GBP",
+                "price_foreign": D("10"),
+            },
+            asset_id=etf.id,
+        )
+    cache.clear()
+
+
+def test_fx_rate_endpoint_for_the_purchase_form(client, fin, monkeypatch):
+    from django.core.cache import cache  # noqa: PLC0415
+
+    cache.clear()
+    day = date(2026, 11, 9)  # a Monday: the rate is Friday's
+    monkeypatch.setattr(prices, "nbp_fx", lambda code, s, e: {date(2026, 11, 6): D("3.97")})
+    client.force_login(fin["viewer_user"])
+    body = client.get(f"/api/investments/fx-rate?currency=EUR&on={day}").json()
+    assert body == {
+        "currency": "EUR",
+        "on": "2026-11-09",
+        "rate_date": "2026-11-06",
+        "rate": "3.97",
+    }
+    assert client.get(f"/api/investments/fx-rate?currency=JPY&on={day}").status_code == 422
+    with pytest.raises(PermissionDenied):
+        selectors.trade_rate(fin["outsider"], "EUR", day)
+    cache.clear()
+
+
+def test_gain_in_a_period(client, fin):
+    gold = asset(fin, name="Złoto", kind="gold", unit="g")
+    for day, price in (
+        (date(2025, 1, 10), "300"),
+        (date(2025, 6, 1), "350"),
+        (date(2026, 1, 1), "400"),
+    ):
+        PriceSnapshot.objects.create(asset=gold, date=day, unit_price=D(price), source="manual")
+    lot(fin, gold, "10", "3000", date(2025, 1, 10))  # held: 3500 at the start -> 4000
+    lot(fin, gold, "5", "1800", date(2025, 9, 1))  # bought during it: 1800 -> 2000
+    sold = lot(fin, gold, "2", "600", date(2025, 2, 1))  # 700 at the start, sold for 760
+    services.sell_lot(fin["ctx"], sold.id, sold_on=date(2025, 10, 1), sold_amount=D("760"))
+    gone = lot(fin, gold, "1", "300", date(2025, 1, 10))  # sold before: not counted
+    services.sell_lot(fin["ctx"], gone.id, sold_on=date(2025, 3, 1), sold_amount=D("320"))
+
+    g = selectors.get_asset(fin["ctx"], gold.id)
+    period = selectors.period_gain(g, {}, date(2025, 6, 1), date(2026, 1, 1))
+    assert (period.gain, period.base, period.gain_pct) == (D("760"), D("6000"), D("12.7"))
+    still_held = selectors.period_gain(g, {}, date(2025, 6, 1), date(2026, 1, 1), open_only=True)
+    assert (still_held.gain, still_held.base) == (D("700"), D("5300"))
+
+    client.force_login(fin["user"])
+    body = client.get("/api/investments/portfolio?date_from=2025-06-01&date_to=2026-01-01").json()
+    assert (body["period"]["gain"], body["period"]["start"]) == ("760.00", "2025-06-01")
+    assert body["period"]["assets"][str(gold.id)] == {"gain": "760.00", "gain_pct": "12.7"}
+    assert client.get("/api/investments/portfolio").json()["period"] is None  # "all": lifetime
+
+
+def test_period_gain_counts_bond_interest_paid_out(fin):
+    coi = asset(
+        fin,
+        name="COI",
+        kind="bond",
+        bond_type="COI",
+        bond_first_rate=D("5.00"),
+        bond_margin=D("1.50"),
+    )
+    lot(fin, coi, "10", "1000", date(2025, 1, 15))  # 5% for the first year: 50 zł on 15.01.2026
+    a = selectors.get_asset(fin["ctx"], coi.id)
+    [held] = a.lots.all()
+    start, end = date(2025, 6, 1), date(2026, 3, 1)
+    pricer = selectors.Pricer(a)
+    moved = (
+        selectors.lot_value(a, held, end, pricer, {})[0]
+        - selectors.lot_value(a, held, start, pricer, {})[0]
+    )
+    assert selectors.period_gain(a, {}, start, end).gain == (moved + D("50")).quantize(D("0.01"))

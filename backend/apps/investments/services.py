@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -16,7 +17,14 @@ from django.utils import timezone
 
 from . import bonds, deposits, prices
 from .models import TROY_OUNCE_G, Asset, AssetShare, InflationIndex, Lot, PriceSnapshot
-from .selectors import family_users, get_asset, get_lot, require
+from .selectors import (
+    TRADE_CURRENCIES,
+    family_users,
+    get_asset,
+    get_lot,
+    rate_before,
+    require,
+)
 
 if TYPE_CHECKING:
     from apps.access.context import AccessContext
@@ -108,20 +116,137 @@ def save_lot(
     asset_id: UUID | None = None,
     lot_id: UUID | None = None,
 ) -> Lot:
+    """A purchase. Paid in another currency: ``price_currency`` with
+    ``price_foreign`` (and ``price_rate``, else NBP's) — kept in PLN too."""
     require(ctx, "edit")
     lot = get_lot(ctx, lot_id, "edit") if lot_id else Lot(asset=get_asset(ctx, asset_id, "edit"))
     for k, v in data.items():
         setattr(lot, k, v)
     if lot.quantity is None or lot.quantity <= 0:
         raise ValueError("quantity must be more than 0")
-    if lot.price_total is None or lot.price_total < 0:
-        raise ValueError("the price can't be negative")
     if lot.bought_on > timezone.localdate():
         raise ValueError("the purchase date is in the future")
+    if lot.price_currency == "PLN":
+        lot.price_foreign = lot.price_rate = None
+    else:
+        lot.price_total, lot.price_rate = _to_pln(
+            lot.price_currency, lot.price_foreign, lot.price_rate, lot.bought_on
+        )
+    if lot.price_total is None or lot.price_total < 0:
+        raise ValueError("the price can't be negative")
     if lot.sold_on and lot.sold_on < lot.bought_on:
         raise ValueError("sold before it was bought")
     lot.save()
     schedule_refresh(lot.asset_id)
+    return lot
+
+
+CENT = Decimal("0.01")
+
+
+def _to_pln(
+    currency: str, amount: Decimal | None, rate: Decimal | None, day: date
+) -> tuple[Decimal, Decimal]:
+    """PLN for ``amount`` in ``currency``, and the rate used: the one given
+    (e.g. the broker's), else NBP's from the last working day before ``day``
+    (as Polish tax rules count a foreign-currency purchase or sale)."""
+    if currency not in TRADE_CURRENCIES or currency == "PLN":
+        raise ValueError(f"currency must be one of {TRADE_CURRENCIES}")
+    if amount is None or amount < 0:
+        raise ValueError("the amount can't be negative")
+    if rate is None:
+        try:
+            rate = rate_before(currency, day)[1]
+        except prices.PriceError as exc:
+            raise ValueError("NBP rate unavailable — enter the rate yourself") from exc
+    if rate <= 0:
+        raise ValueError("the rate must be more than 0")
+    return (amount * rate).quantize(CENT), rate
+
+
+def _check_sale(asset: Asset, sold_on: date, quantity: Decimal) -> None:
+    if sold_on > timezone.localdate():
+        raise ValueError("the sale date is in the future")
+    if quantity <= 0:
+        raise ValueError("quantity must be more than 0")
+    if asset.kind == Asset.Kind.BOND and quantity != quantity.to_integral_value():
+        raise ValueError("bonds are sold whole")
+
+
+@dataclass
+class _Received:
+    """What a sale brought: PLN, and the foreign amount and rate if any."""
+
+    pln: Decimal
+    currency: str = "PLN"
+    foreign: Decimal | None = None
+    rate: Decimal | None = None
+
+    @classmethod
+    def of(cls, sold_on: date, money: dict[str, Any]) -> _Received:
+        currency = money.get("sold_currency") or "PLN"
+        if currency == "PLN":
+            amount = money.get("sold_amount")
+            if amount is None or amount < 0:
+                raise ValueError("the amount can't be negative")
+            return cls(amount)
+        foreign = money.get("sold_foreign")
+        pln, rate = _to_pln(currency, foreign, money.get("sold_rate"), sold_on)
+        return cls(pln, currency, foreign, rate)
+
+    def share(self, part: Decimal, whole: Decimal) -> _Received:
+        """This sale's part for ``part`` of ``whole`` sold."""
+        cut = lambda v: None if v is None else (v * part / whole).quantize(CENT)  # noqa: E731
+        return _Received(cut(self.pln), self.currency, cut(self.foreign), self.rate)
+
+    def minus(self, other: _Received) -> _Received:
+        rest = None if self.foreign is None else self.foreign - other.foreign
+        return _Received(self.pln - other.pln, self.currency, rest, self.rate)
+
+
+def _split(lot: Lot, quantity: Decimal) -> Lot:
+    """Cut ``quantity`` off an open purchase into its own lot — bought the
+    same day, with its share of the price (the rest stays with ``lot``)."""
+    share = (lot.price_total * quantity / lot.quantity).quantize(CENT)
+    foreign = None
+    if lot.price_foreign is not None:
+        foreign = (lot.price_foreign * quantity / lot.quantity).quantize(CENT)
+    part = Lot.objects.create(
+        asset=lot.asset,
+        bought_on=lot.bought_on,
+        quantity=quantity,
+        price_total=share,
+        price_currency=lot.price_currency,
+        price_foreign=foreign,
+        price_rate=lot.price_rate,
+        rate_overrides=dict(lot.rate_overrides),
+        notes=lot.notes,
+    )
+    lot.quantity -= quantity
+    lot.price_total -= share
+    if foreign is not None:
+        lot.price_foreign -= foreign
+    lot.save(update_fields=["quantity", "price_total", "price_foreign", "updated_at"])
+    return part
+
+
+def _mark_sold(lot: Lot, sold_on: date, received: _Received) -> Lot:
+    lot.sold_on, lot.sold_amount = sold_on, received.pln
+    lot.sold_currency, lot.sold_foreign, lot.sold_rate = (
+        received.currency,
+        received.foreign,
+        received.rate,
+    )
+    lot.save(
+        update_fields=[
+            "sold_on",
+            "sold_amount",
+            "sold_currency",
+            "sold_foreign",
+            "sold_rate",
+            "updated_at",
+        ]
+    )
     return lot
 
 
@@ -131,17 +256,64 @@ def sell_lot(
     lot_id: UUID,
     *,
     sold_on: date,
-    sold_amount: Decimal,
+    quantity: Decimal | None = None,
+    **money: Any,
 ) -> Lot:
+    """Sell a purchase: all of it, or ``quantity`` of it (that part becomes
+    its own lot with its share of the price). ``money``: ``sold_amount`` in
+    PLN, or ``sold_currency`` + ``sold_foreign`` (+ ``sold_rate``). Returns
+    the sold lot."""
     require(ctx, "edit")
     lot = get_lot(ctx, lot_id, "edit")
+    quantity = lot.quantity if quantity is None else quantity
+    _check_sale(lot.asset, sold_on, quantity)
     if sold_on < lot.bought_on:
         raise ValueError("sold before it was bought")
-    if sold_amount < 0:
-        raise ValueError("the amount can't be negative")
-    lot.sold_on, lot.sold_amount = sold_on, sold_amount
-    lot.save(update_fields=["sold_on", "sold_amount", "updated_at"])
-    return lot
+    if quantity > lot.quantity:
+        raise ValueError("can't sell more than this purchase holds")
+    received = _Received.of(sold_on, money)
+    if quantity < lot.quantity:
+        if lot.sold_on:
+            raise ValueError("this purchase is already sold")
+        lot = _split(lot, quantity)
+    return _mark_sold(lot, sold_on, received)
+
+
+@atomic
+def sell_asset(
+    ctx: AccessContext,
+    asset_id: UUID,
+    *,
+    sold_on: date,
+    quantity: Decimal,
+    **money: Any,
+) -> list[Lot]:
+    """Sell ``quantity`` of what's held on ``sold_on``, the oldest purchases
+    first (FIFO — as the tax office counts it). The last purchase touched is
+    split; what was received is shared out by quantity. Returns the sold lots."""
+    require(ctx, "edit")
+    asset = get_asset(ctx, asset_id, "edit")
+    _check_sale(asset, sold_on, quantity)
+    held = sorted(
+        (lot for lot in asset.lots.all() if lot.sold_on is None and lot.bought_on <= sold_on),
+        key=lambda lot: (lot.bought_on, lot.created_at),
+    )
+    if quantity > sum((lot.quantity for lot in held), Decimal(0)):
+        raise ValueError("can't sell more than was held that day")
+    received = _Received.of(sold_on, money)
+    sold: list[Lot] = []
+    left, rest = quantity, received
+    for lot in held:
+        if not left:
+            break
+        lot.asset = asset
+        take = min(lot.quantity, left)
+        got = rest if take == left else received.share(take, quantity)
+        part = _split(lot, take) if take < lot.quantity else lot
+        sold.append(_mark_sold(part, sold_on, got))
+        left -= take
+        rest = rest.minus(got)
+    return sold
 
 
 def delete_lot(ctx: AccessContext, lot_id: UUID) -> None:

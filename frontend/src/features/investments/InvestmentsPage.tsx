@@ -3,8 +3,10 @@
  * Gold (NBP) and crypto (CoinGecko) are priced daily; bonds are computed
  * from their rules and GUS inflation; stocks and others are valued by hand.
  * Click an asset for its chart, purchases, bond periods and values.
+ * Amounts are kept in PLN; the PLN / USD / EUR switch shows them in another
+ * currency at the latest NBP rate.
  */
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { DonutChart, LineChart } from "@mantine/charts";
 import {
   ActionIcon,
@@ -36,13 +38,24 @@ import {
   IconUsers,
 } from "@tabler/icons-react";
 import { DatePickerInput } from "@mantine/dates";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocalStorage } from "@mantine/hooks";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
 
 import { usePermissions } from "@/features/auth/usePermissions";
-import { fmtDate, fmtMoney, fmtQty, isoDate } from "@/lib/format";
+import { fmtDate, fmtMoney, fmtNumber, fmtQty, isoDate } from "@/lib/format";
 
-import { type Asset, type AssetKind, INVESTMENTS_KEY, investmentsApi, type Lot, type Point } from "./api";
+import {
+  type Asset,
+  type AssetKind,
+  type Currency,
+  type Gain,
+  INVESTMENTS_KEY,
+  investmentsApi,
+  type Lot,
+  type Point,
+} from "./api";
 import { AssetModal, InflationModal, LotModal, SellModal, ValueModal } from "./forms";
 
 const KIND_COLOR: Record<AssetKind, string> = {
@@ -61,7 +74,24 @@ const RANGES = [
 ];
 const KINDS: AssetKind[] = ["gold", "silver", "crypto", "stock", "bond", "other"];
 
-const pln = (v: string | number) => fmtMoney(Number(v).toFixed(2), "PLN");
+const CURRENCIES: Currency[] = ["PLN", "USD", "EUR"];
+
+/** Shows PLN amounts in the picked currency: ``rate`` = PLN for 1 unit of it. */
+function makeMoney(currency: Currency, rate: number) {
+  const conv = (v: string | number) => Number(v) / rate;
+  return {
+    currency,
+    conv,
+    /** A PLN amount, converted and formatted. */
+    fmt: (v: string | number) => fmtMoney(conv(v).toFixed(2), currency),
+    /** An amount already in ``currency`` (chart points), formatted. */
+    show: (v: string | number) => fmtMoney(Number(v).toFixed(2), currency),
+  };
+}
+type Money = ReturnType<typeof makeMoney>;
+const MoneyContext = createContext<Money>(makeMoney("PLN", 1));
+const useMoney = () => useContext(MoneyContext);
+
 const gainColor = (v: string) => (Number(v) > 0 ? "teal" : Number(v) < 0 ? "red" : undefined);
 
 function chartData(points: Point[]) {
@@ -84,13 +114,32 @@ export function InvestmentsPage() {
   const [form, setForm] = useState<Asset | null | "new">(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [inflationOpen, setInflationOpen] = useState(false);
+  const [currency, setCurrency] = useLocalStorage<Currency>({
+    key: "investments.currency",
+    defaultValue: "PLN",
+    getInitialValueInEffect: false,
+  });
+  const fx = useQuery({
+    queryKey: [...INVESTMENTS_KEY, "fx"],
+    queryFn: investmentsApi.fx,
+    enabled: currency !== "PLN",
+    staleTime: 3_600_000,
+    retry: 1,
+  });
+  const rate = currency === "PLN" ? 1 : Number(fx.data?.rates[currency] ?? 0);
+  // Until the rate is known (or if NBP can't be reached) amounts stay in PLN.
+  const money = rate > 0 ? makeMoney(currency, rate) : makeMoney("PLN", 1);
 
   const assets = useQuery({ queryKey: [...INVESTMENTS_KEY, "assets"], queryFn: investmentsApi.assets });
   const portfolio = useQuery({
     queryKey: [...INVESTMENTS_KEY, "portfolio", filters],
     queryFn: () => investmentsApi.portfolio(filters),
+    placeholderData: keepPreviousData, // no flicker while changing the range
   });
   const p = portfolio.data;
+  // With a date range the gains are those earned in it; otherwise since bought.
+  const period = p?.period ?? null;
+  const periodLabel = period ? `${fmtDate(period.start)} – ${fmtDate(period.end)}` : "";
   const kindsHeld = KINDS.filter((k) => (assets.data ?? []).some((a) => a.kind === k));
   const shown = (assets.data ?? []).filter(
     (a) => (kind === "all" || a.kind === kind) && (!openOnly || Number(a.quantity) > 0),
@@ -106,10 +155,19 @@ export function InvestmentsPage() {
     .map(([k, v]) => ({ name: t(`investments.kind.${k}`), value: Number(v), color: KIND_COLOR[k as AssetKind] }));
 
   return (
+    <MoneyContext.Provider value={money}>
     <Stack gap="lg">
-      <Group justify="space-between">
-        <Title order={2}>{t("investments.title")}</Title>
-        <Group>
+      <PageHeader
+        title={t("investments.title")}
+        subtitle={t("page.investments.subtitle")}
+        actions={
+        <>
+          <SegmentedControl
+            value={currency}
+            onChange={(v) => setCurrency(v as Currency)}
+            data={CURRENCIES}
+            aria-label={t("investments.currency")}
+          />
           {canEdit && (
             <Tooltip label={t("investments.refreshHint")}>
               <Button variant="default" leftSection={<IconRefresh size={16} />} loading={refresh.isPending} onClick={() => refresh.mutate()}>
@@ -125,9 +183,23 @@ export function InvestmentsPage() {
               {t("investments.add")}
             </Button>
           )}
-        </Group>
-      </Group>
+        </>
+        }
+      />
 
+      {currency !== "PLN" && (
+        <Text size="xs" c={fx.isError ? "orange" : "dimmed"} mt={-8}>
+          {fx.isError
+            ? t("investments.fxError")
+            : fx.data && rate > 0
+              ? t("investments.fxNote", {
+                  currency,
+                  date: fmtDate(fx.data.date),
+                  rate: fmtNumber(rate, 4),
+                })
+              : t("investments.fxLoading")}
+        </Text>
+      )}
       {refresh.data && refresh.data.errors > 0 && (
         <Text size="sm" c="orange">
           {t("investments.refreshErrors")}
@@ -146,14 +218,23 @@ export function InvestmentsPage() {
       )}
       {p && (
         <SimpleGrid cols={{ base: 1, xs: 3 }}>
-          <Tile label={t("investments.value")} value={pln(p.value)} />
-          <Tile label={t("investments.cost")} value={pln(p.cost)} />
-          <Tile
-            label={t("investments.gain")}
-            value={pln(p.gain)}
-            color={gainColor(p.gain)}
-            sub={Number(p.cost) ? `${((Number(p.gain) / Number(p.cost)) * 100).toFixed(1)}%` : undefined}
-          />
+          <Tile label={t("investments.value")} value={money.fmt(p.value)} />
+          <Tile label={t("investments.cost")} value={money.fmt(p.cost)} />
+          {period ? (
+            <Tile
+              label={t("investments.gainInPeriod")}
+              value={money.fmt(period.gain)}
+              color={gainColor(period.gain)}
+              sub={[period.gain_pct != null ? `${period.gain_pct}%` : null, periodLabel].filter(Boolean).join(" · ")}
+            />
+          ) : (
+            <Tile
+              label={t("investments.gain")}
+              value={money.fmt(p.gain)}
+              color={gainColor(p.gain)}
+              sub={Number(p.cost) ? `${((Number(p.gain) / Number(p.cost)) * 100).toFixed(1)}%` : undefined}
+            />
+          )}
         </SimpleGrid>
       )}
 
@@ -203,11 +284,11 @@ export function InvestmentsPage() {
             </Title>
             {pie.length ? (
               <Stack align="center">
-                <DonutChart data={pie} size={180} thickness={28} withTooltip tooltipDataSource="segment" valueFormatter={pln} />
+                <DonutChart data={pie} size={180} thickness={28} withTooltip tooltipDataSource="segment" valueFormatter={money.fmt} />
                 <Group gap="xs" justify="center">
                   {pie.map((s) => (
                     <Badge key={s.name} color={s.color} variant="light">
-                      {s.name}: {pln(s.value)}
+                      {s.name}: {money.fmt(s.value)}
                     </Badge>
                   ))}
                 </Group>
@@ -229,7 +310,15 @@ export function InvestmentsPage() {
               <Table.Th ta="right">{t("investments.held")}</Table.Th>
               <Table.Th ta="right">{t("investments.cost")}</Table.Th>
               <Table.Th ta="right">{t("investments.value")}</Table.Th>
-              <Table.Th ta="right">{t("investments.gain")}</Table.Th>
+              <Table.Th ta="right">
+                {period ? (
+                  <Tooltip label={periodLabel}>
+                    <span>{t("investments.gainInPeriod")}</span>
+                  </Tooltip>
+                ) : (
+                  t("investments.gain")
+                )}
+              </Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -249,19 +338,16 @@ export function InvestmentsPage() {
                   </Group>
                 </Table.Td>
                 <Table.Td ta="right">{held(a, t)}</Table.Td>
-                <Table.Td ta="right">{pln(a.cost)}</Table.Td>
+                <Table.Td ta="right">{money.fmt(a.cost)}</Table.Td>
                 <Table.Td ta="right">
                   <Text size="sm" fw={600}>
-                    {pln(a.value)}
+                    {money.fmt(a.value)}
                   </Text>
                   <Text size="xs" c="dimmed">
                     {a.estimated ? t("investments.estimated") : a.price_date ? fmtDate(a.price_date) : ""}
                   </Text>
                 </Table.Td>
-                <Table.Td ta="right" c={gainColor(a.gain)}>
-                  {pln(a.gain)}
-                  {a.gain_pct != null && <Text size="xs">{a.gain_pct}%</Text>}
-                </Table.Td>
+                <GainCell g={period ? period.assets[a.id] : a} fmt={money.fmt} />
               </Table.Tr>
             ))}
             {assets.isSuccess && !assets.data.length && (
@@ -279,6 +365,18 @@ export function InvestmentsPage() {
       <AssetModal asset={form} onClose={() => setForm(null)} />
       <InflationModal opened={inflationOpen} onClose={() => setInflationOpen(false)} />
     </Stack>
+    </MoneyContext.Provider>
+  );
+}
+
+/** A gain with its % (none when the asset isn't in the chosen period's data). */
+function GainCell({ g, fmt }: { g: Gain | undefined; fmt: (v: string) => string }) {
+  if (!g) return <Table.Td ta="right">—</Table.Td>;
+  return (
+    <Table.Td ta="right" c={gainColor(g.gain)}>
+      {fmt(g.gain)}
+      {g.gain_pct != null && <Text size="xs">{g.gain_pct}%</Text>}
+    </Table.Td>
   );
 }
 
@@ -316,8 +414,10 @@ export function valueDomain(points: Point[]): [number, number] {
   return [Math.floor(Math.max(0, lo - pad)), Math.ceil(hi + pad)];
 }
 
-function ValueChart({ points }: { points: Point[] }) {
+function ValueChart({ points: pln }: { points: Point[] }) {
   const { t } = useTranslation();
+  const money = useMoney();
+  const points = pln.map((p) => ({ ...p, value: String(money.conv(p.value)), cost: String(money.conv(p.cost)) }));
   if (!points.length) {
     return (
       <Text size="sm" c="dimmed">
@@ -334,7 +434,7 @@ function ValueChart({ points }: { points: Point[] }) {
       withLegend
       withDots={false}
       curveType="linear"
-      valueFormatter={pln}
+      valueFormatter={money.show}
       series={[
         { name: "value", label: t("investments.value"), color: "indigo.6" },
         { name: "cost", label: t("investments.cost"), color: "gray.5", strokeDasharray: "5 5" },
@@ -345,10 +445,12 @@ function ValueChart({ points }: { points: Point[] }) {
 
 function AssetDrawer(props: { asset: Asset | null; canEdit: boolean; onClose: () => void; onEdit: (a: Asset) => void }) {
   const { t } = useTranslation();
+  const money = useMoney();
   const qc = useQueryClient();
   const a = props.asset;
   const [lotForm, setLotForm] = useState<{ lot: Lot | null } | null>(null);
-  const [selling, setSelling] = useState<Lot | null>(null);
+  // A sale of one purchase ({lot}), or of part of the holding ({lot: null}).
+  const [selling, setSelling] = useState<{ lot: Lot | null } | null>(null);
   const [valueFor, setValueFor] = useState<Asset | null>(null);
   const [periodsFor, setPeriodsFor] = useState<string | null>(null);
   const series = useQuery({
@@ -366,6 +468,7 @@ function AssetDrawer(props: { asset: Asset | null; canEdit: boolean; onClose: ()
     },
   });
   const manual = a && (a.kind === "stock" || a.kind === "other");
+  const deposit = a?.kind === "other" && a.rate != null;
 
   return (
     <Drawer opened={!!a} onClose={props.onClose} position="right" size="xl" title={a?.name ?? ""}>
@@ -386,16 +489,16 @@ function AssetDrawer(props: { asset: Asset | null; canEdit: boolean; onClose: ()
             )}
           </Group>
           <SimpleGrid cols={3}>
-            <Tile label={t("investments.value")} value={pln(a.value)} sub={a.estimated ? t("investments.estimated") : undefined} />
-            <Tile label={t("investments.cost")} value={pln(a.cost)} />
-            <Tile label={t("investments.gain")} value={pln(a.gain)} color={gainColor(a.gain)} sub={a.gain_pct != null ? `${a.gain_pct}%` : undefined} />
+            <Tile label={t("investments.value")} value={money.fmt(a.value)} sub={a.estimated ? t("investments.estimated") : undefined} />
+            <Tile label={t("investments.cost")} value={money.fmt(a.cost)} />
+            <Tile label={t("investments.gain")} value={money.fmt(a.gain)} color={gainColor(a.gain)} sub={a.gain_pct != null ? `${a.gain_pct}%` : undefined} />
           </SimpleGrid>
           {Number(a.paid_out) > 0 && (
-            <Text size="sm">{t("investments.paidOut", { amount: pln(a.paid_out) })}</Text>
+            <Text size="sm">{t("investments.paidOut", { amount: money.fmt(a.paid_out) })}</Text>
           )}
           {Number(a.realized) !== 0 && (
             <Text size="sm" c={gainColor(a.realized)}>
-              {t("investments.realized", { amount: pln(a.realized) })}
+              {t("investments.realized", { amount: money.fmt(a.realized) })}
             </Text>
           )}
           <ValueChart points={series.data ?? []} />
@@ -410,6 +513,11 @@ function AssetDrawer(props: { asset: Asset | null; canEdit: boolean; onClose: ()
               <Button size="xs" leftSection={<IconPlus size={14} />} onClick={() => setLotForm({ lot: null })}>
                 {t("investments.addLot")}
               </Button>
+              {Number(a.quantity) > 0 && !deposit && (
+                <Button size="xs" variant="light" leftSection={<IconCash size={14} />} onClick={() => setSelling({ lot: null })}>
+                  {t("investments.sell")}
+                </Button>
+              )}
               {manual && (
                 <Button size="xs" variant="light" onClick={() => setValueFor(a)}>
                   {t("investments.setValue")}
@@ -459,14 +567,14 @@ function AssetDrawer(props: { asset: Asset | null; canEdit: boolean; onClose: ()
                   showPeriods={periodsFor === lot.id}
                   onTogglePeriods={() => setPeriodsFor(periodsFor === lot.id ? null : lot.id)}
                   onEdit={() => setLotForm({ lot })}
-                  onSell={() => setSelling(lot)}
+                  onSell={() => setSelling({ lot })}
                   onDelete={() => removeLot.mutate(lot.id)}
                 />
               ))}
             </Table.Tbody>
           </Table>
           <LotModal asset={a} lot={lotForm?.lot ?? null} opened={!!lotForm} onClose={() => setLotForm(null)} />
-          <SellModal lot={selling} onClose={() => setSelling(null)} />
+          <SellModal asset={a} lot={selling?.lot ?? null} opened={!!selling} onClose={() => setSelling(null)} />
           <ValueModal asset={valueFor} onClose={() => setValueFor(null)} />
         </Stack>
       )}
@@ -485,6 +593,7 @@ function LotRow(props: {
   onDelete: () => void;
 }) {
   const { t } = useTranslation();
+  const money = useMoney();
   const { lot, asset } = props;
   return (
     <>
@@ -493,8 +602,28 @@ function LotRow(props: {
         <Table.Td ta="right">
           {asset.kind === "bond" ? t("investments.bondsCount", { count: Number(lot.quantity) }) : fmtQty(lot.quantity)}
         </Table.Td>
-        <Table.Td ta="right">{pln(lot.price_total)}</Table.Td>
-        <Table.Td>{lot.sold_on ? `${fmtDate(lot.sold_on)} · ${pln(lot.sold_amount ?? 0)}` : "—"}</Table.Td>
+        <Table.Td ta="right">
+          {money.fmt(lot.price_total)}
+          {lot.price_currency !== "PLN" && lot.price_foreign != null && (
+            <Text size="xs" c="dimmed">
+              {t("investments.paidForeign", {
+                amount: fmtMoney(lot.price_foreign, lot.price_currency),
+                rate: fmtNumber(lot.price_rate, 4),
+              })}
+            </Text>
+          )}
+        </Table.Td>
+        <Table.Td>
+          {lot.sold_on ? `${fmtDate(lot.sold_on)} · ${money.fmt(lot.sold_amount ?? 0)}` : "—"}
+          {lot.sold_on && lot.sold_currency !== "PLN" && lot.sold_foreign != null && (
+            <Text size="xs" c="dimmed">
+              {t("investments.paidForeign", {
+                amount: fmtMoney(lot.sold_foreign, lot.sold_currency),
+                rate: fmtNumber(lot.sold_rate, 4),
+              })}
+            </Text>
+          )}
+        </Table.Td>
         <Table.Td>
           <Group gap={2} justify="flex-end" wrap="nowrap">
             {asset.kind === "bond" && (

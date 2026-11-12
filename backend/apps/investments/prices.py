@@ -11,6 +11,8 @@ timeout and failing is fine: values can always be entered by hand.
 - Yahoo Finance chart data (no key; an *unofficial* interface - it may
   change or rate-limit): stocks/ETFs anywhere (SPY, CSPX.L, SXR8.DE,
   CDR.WA) and COMEX silver; converted to PLN with NBP rates (table A).
+- NBP table A, latest: today's rates for showing values in USD / EUR; and
+  the last working day's before a purchase / sale in another currency.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ GUS_PAGE = (
 GUS_ROOT = "https://stat.gov.pl"
 YOY = "Analogiczny miesiąc poprzedniego roku = 100"
 NBP_FX = "https://api.nbp.pl/api/exchangerates/rates/a/{code}/{start}/{end}/?format=json"
+NBP_TABLE_A = "https://api.nbp.pl/api/exchangerates/tables/a/?format=json"
 YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 # Yahoo's chart data is an unofficial interface; it answers browser-like clients.
 YAHOO_HEADERS = {
@@ -151,6 +154,32 @@ def parse_nbp_fx(body: dict) -> dict[date, Decimal]:
         date.fromisoformat(r["effectiveDate"]): Decimal(str(r["mid"]))
         for r in body.get("rates", [])
     }
+
+
+def nbp_latest() -> tuple[date, dict[str, Decimal]]:
+    """The latest NBP table A: its day and PLN for 1 unit of each currency."""
+    resp = _get(NBP_TABLE_A)
+    if resp.status_code != 200:  # noqa: PLR2004
+        raise PriceError(f"NBP table A: HTTP {resp.status_code}")
+    return parse_nbp_table(resp.json())
+
+
+def parse_nbp_table(body: list[dict]) -> tuple[date, dict[str, Decimal]]:
+    if not body:
+        raise PriceError("NBP table A: empty")
+    table = body[0]
+    rates = {r["code"]: Decimal(str(r["mid"])) for r in table.get("rates", [])}
+    return date.fromisoformat(table["effectiveDate"]), rates
+
+
+def nbp_rate_before(code: str, day: date) -> tuple[date, Decimal]:
+    """NBP's average rate (table A) from the last working day before ``day``
+    - the one Polish tax rules use for a purchase or sale in that currency."""
+    rates = nbp_fx(code, day - timedelta(days=14), day - timedelta(days=1))
+    if not rates:
+        raise PriceError(f"NBP {code}: no rate before {day}")
+    last = max(rates)
+    return last, rates[last]
 
 
 def to_pln(found: dict[date, Decimal], currency: str) -> dict[date, Decimal]:
