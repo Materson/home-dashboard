@@ -178,6 +178,8 @@ def update_recurring(
 
 
 # ---- Categories ---------------------------------------------------------
+# Two levels: main categories (e.g. Samochód) and their sub-categories
+# (Paliwo, Przegląd techniczny). A transaction may sit in either.
 
 CATEGORY_KINDS = ("expense", "income")
 
@@ -189,46 +191,89 @@ def _clean_name(name: str) -> str:
     return name
 
 
-def _check_unique(name: str, kind: str, exclude_id: UUID | None = None) -> None:
-    clash = Category.objects.filter(name__iexact=name, kind=kind)
+def _check_unique(
+    name: str, kind: str, parent: Category | None, exclude_id: UUID | None = None
+) -> None:
+    """Unique among its siblings — "Inne" may sit under several main ones."""
+    clash = Category.objects.filter(name__iexact=name, kind=kind, parent=parent)
     if exclude_id:
         clash = clash.exclude(pk=exclude_id)
     if clash.exists():
-        raise ValueError(f"a category named {name!r} already exists")
+        raise ValueError(f"a category named {name!r} already exists there")
+
+
+def _parent_for(kind: str, parent_id: UUID | None, cat: Category | None = None) -> Category | None:
+    """The main category to put ``cat`` (or a new one) under, checked."""
+    if not parent_id:
+        return None
+    parent = Category.objects.filter(pk=parent_id).first()
+    if parent is None:
+        raise ValueError("the main category doesn't exist")
+    if parent.kind != kind:
+        raise ValueError("a sub-category must be of the same kind as its main category")
+    if parent.parent_id:
+        raise ValueError("a sub-category can't have sub-categories of its own")
+    if cat is not None:
+        if parent.pk == cat.pk:
+            raise ValueError("a category can't be under itself")
+        if cat.children.exists():
+            raise ValueError("it has sub-categories of its own, so it stays a main category")
+    return parent
 
 
 @atomic
 def create_category(
-    ctx: AccessContext, *, name: str, kind: str, color: str = "#868e96"
+    ctx: AccessContext,
+    *,
+    name: str,
+    kind: str,
+    color: str = "",
+    parent_id: UUID | None = None,
 ) -> Category:
     ctx.require("finance", "edit")
     if kind not in CATEGORY_KINDS:
         raise ValueError("a category is an expense or an income one")
     name = _clean_name(name)
-    _check_unique(name, kind)
+    parent = _parent_for(kind, parent_id)
+    _check_unique(name, kind, parent)
     from apps.core.uuid7 import uuid7  # noqa: PLC0415
 
     return Category.objects.create(
-        key=f"user.{uuid7().hex[:12]}", name=name, kind=kind, color=color or "#868e96"
+        key=f"user.{uuid7().hex[:12]}",
+        name=name,
+        kind=kind,
+        parent=parent,
+        color=color or (parent.color if parent else "#868e96"),
     )
 
 
 @atomic
-def update_category(ctx: AccessContext, category_id: UUID, *, name: str, color: str) -> Category:
-    """Rename / recolour — built-in categories too (their key stays)."""
+def update_category(
+    ctx: AccessContext,
+    category_id: UUID,
+    *,
+    name: str,
+    color: str,
+    parent_id: UUID | None = None,
+) -> Category:
+    """Rename / recolour / move under another main category (or make it a
+    main one with ``parent_id=None``) — built-in categories too (their key
+    stays, so cars and health keep finding them)."""
     ctx.require("finance", "edit")
     cat = Category.objects.get(pk=category_id)
     cat.name = _clean_name(name)
-    _check_unique(cat.name, cat.kind, exclude_id=cat.id)
+    cat.parent = _parent_for(cat.kind, parent_id, cat)
+    _check_unique(cat.name, cat.kind, cat.parent, exclude_id=cat.id)
     cat.color = color or cat.color
-    cat.save(update_fields=["name", "color", "updated_at"])
+    cat.save(update_fields=["name", "color", "parent", "updated_at"])
     return cat
 
 
 @atomic
 def merge_category(ctx: AccessContext, source_id: UUID, target_id: UUID) -> int:
     """Move everything from ``source`` into ``target`` (same kind) and delete
-    ``source``. Returns how many transactions moved."""
+    ``source``; its sub-categories move under ``target``. Returns how many
+    transactions moved."""
     ctx.require("finance", "edit")
     source = Category.objects.get(pk=source_id)
     target = Category.objects.get(pk=target_id)
@@ -238,6 +283,10 @@ def merge_category(ctx: AccessContext, source_id: UUID, target_id: UUID) -> int:
         raise ValueError("both categories must be of the same kind")
     if source.is_system:
         raise ValueError("a built-in category can't be merged away")
+    if target.parent_id and source.children.exists():
+        raise ValueError(
+            "it has sub-categories, so it can only be merged into another main category"
+        )
     moved = source.transactions.update(category=target)
     source.recurring_rules.update(category=target)
     source.bookmarks.update(category=target)
@@ -248,13 +297,16 @@ def merge_category(ctx: AccessContext, source_id: UUID, target_id: UUID) -> int:
 
 @atomic
 def delete_category(ctx: AccessContext, category_id: UUID) -> None:
-    """Only an unused, non-built-in one — otherwise merge it into another."""
+    """Only an unused, non-built-in one without sub-categories — otherwise
+    merge it into another."""
     ctx.require("finance", "edit")
     cat = Category.objects.get(pk=category_id)
     if cat.is_system:
         raise ValueError("a built-in category can't be deleted (rename it instead)")
     if cat.transactions.exists() or cat.recurring_rules.exists():
         raise ValueError("the category is in use — merge it into another one instead")
+    if cat.children.exists():
+        raise ValueError("it has sub-categories — move or delete them first")
     cat.delete()
 
 

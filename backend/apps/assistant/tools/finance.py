@@ -59,7 +59,7 @@ def finance_summary(run: ToolRun, args: dict[str, Any]) -> Any:
     by_cat: dict[tuple, Decimal] = defaultdict(Decimal)
     for t in rows:
         totals[f"{t.category.kind}:{t.currency}"] += t.amount
-        by_cat[(t.category.name, t.category.kind, t.currency)] += t.amount
+        by_cat[(_path(t.category), t.category.kind, t.currency)] += t.amount
     return {
         "month": f"{start:%Y-%m}",
         "totals": {k: money(v) for k, v in totals.items()},
@@ -81,7 +81,10 @@ def finance_summary(run: ToolRun, args: dict[str, Any]) -> Any:
             "kind": {"type": "string", "enum": ["income", "expense"]},
             "category": {
                 "type": "string",
-                "description": "Category name or key, e.g. Paliwo / car.fuel.",
+                "description": (
+                    "Category name, key or main / sub path, e.g. Paliwo, car.fuel, "
+                    "Samochód / Paliwo. A main category includes its sub-categories."
+                ),
             },
             "min_amount": NUM,
             "max_amount": NUM,
@@ -116,7 +119,7 @@ def finance_search(run: ToolRun, args: dict[str, Any]) -> Any:
                 "name": t.name,
                 "amount": money(t.amount),
                 "currency": t.currency,
-                "category": t.category.name,
+                "category": _path(t.category),
                 "kind": t.category.kind,
                 "person": t.person.display_name if t.person else None,
             }
@@ -126,18 +129,25 @@ def finance_search(run: ToolRun, args: dict[str, Any]) -> Any:
     }
 
 
+def _path(cat: Category) -> str:
+    """A sub-category as "Samochód / Paliwo", a main one by its name."""
+    return f"{cat.parent.name} / {cat.name}" if cat.parent_id else cat.name
+
+
 def _category(name: str, kind: str | None = None) -> Category:
     name = name.strip()
-    qs = Category.objects.filter(Q(name__iexact=name) | Q(key__iexact=name))
+    qs = Category.objects.select_related("parent")
     if kind:
         qs = qs.filter(kind=kind)
-    cat = qs.first()
-    if cat is None:
-        options = Category.objects.filter(**({"kind": kind} if kind else {})).values_list(
-            "name", flat=True
-        )
-        raise ToolError(f"unknown category {name!r}; choose one of: {', '.join(sorted(options))}")
-    return cat
+    found = list(qs.filter(Q(name__iexact=name) | Q(key__iexact=name)))
+    main, _, child = (part.strip() for part in name.replace("›", "/").partition("/"))  # noqa: RUF001
+    if not found and child:  # "Samochód / Paliwo" (a name may hold "/" itself)
+        found = list(qs.filter(name__iexact=child, parent__name__iexact=main))
+    if len(found) == 1:
+        return found[0]
+    problem = "ambiguous" if found else "unknown"
+    options = ", ".join(sorted(_path(c) for c in (found or qs)))
+    raise ToolError(f"{problem} category {name!r}; choose one of: {options}")
 
 
 @tool(
@@ -150,7 +160,10 @@ def _category(name: str, kind: str | None = None) -> Category:
             "currency": {"type": "string", "description": "Default PLN."},
             "date": DATE,
             "name": STR,
-            "category": {"type": "string", "description": "Category name, e.g. Spożywcze."},
+            "category": {
+                "type": "string",
+                "description": "Category name or main / sub path, e.g. Samochód / Paliwo.",
+            },
             "person": PERSON,
             "notes": STR,
         },
@@ -177,7 +190,7 @@ def propose_transaction(run: ToolRun, args: dict[str, Any]) -> Any:
         "currency": (args.get("currency") or "PLN").upper()[:3],
         "name": str(args.get("name", "")).strip()[:200] or cat.name,
         "category_id": str(cat.id),
-        "category": cat.name,
+        "category": _path(cat),
         "kind": kind,
         "person_id": str(person.id) if person else None,
         "person": person.display_name if person else None,

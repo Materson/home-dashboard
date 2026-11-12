@@ -855,5 +855,15 @@
   "investments.sharing": "Udostępnianie",
   "investments.sharingHint": "Inwestycja jest widoczna tylko dla Ciebie, chyba że ją udostępnisz.",
   "investments.sharedWith": "Udostępniona: {{names}}",
-  "investments.sharedBy": "Udostępnia: {{name}}"
+  "investments.sharedBy": "Udostępnia: {{name}}",
+  "finance.categories.parent": "Należy do",
+  "finance.categories.asMain": "— główna kategoria",
+  "finance.categories.newSubName": "Nowa podkategoria…",
+  "finance.categories.addSub": "Dodaj podkategorię",
+  "finance.categories.hasSubHint": "Ma własne podkategorie, więc zostaje kategorią główną.",
+  "finance.categories.mergeSubHint": "Jej podkategorie też przejdą do wybranej kategorii.",
+  "finance.charts.allCategories": "Wszystkie",
+  "finance.charts.inGroup": "{{title}}: {{name}}",
+  "finance.charts.groupItself": "{{name}} (bez podkategorii)",
+  "finance.charts.openGroup": "Pokaż podkategorie"
 }

@@ -216,9 +216,10 @@ function qs(f: TransactionFilters): string {
 
 export const financeApi = {
   listCategories: () => call<Category[]>("/categories"),
-  createCategory: (body: { name: string; kind: "expense" | "income"; color: string }) =>
+  createCategory: (body: { name: string; kind: "expense" | "income"; color: string; parent_id?: string | null }) =>
     call<Category>("/categories", { method: "POST", body: JSON.stringify(body) }),
-  updateCategory: (id: string, body: { name: string; color: string }) =>
+  /** ``parent_id: null`` makes it a main category. */
+  updateCategory: (id: string, body: { name: string; color: string; parent_id: string | null }) =>
     call<Category>(`/categories/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   mergeCategory: (id: string, into: string) =>
     call<{ moved: number }>(`/categories/${id}/merge`, { method: "POST", body: JSON.stringify({ into }) }),
@@ -234,9 +235,17 @@ export const financeApi = {
     call<MonthlyTotal[]>(
       `/monthly-totals?until=${until}&months=${months}${person ? `&person=${person}` : ""}`,
     ),
-  categoryTotals: (from: string, to: string, kind: "income" | "expense", person?: string | null) =>
+  /** Per main category; with ``parent``, that main category per sub-category. */
+  categoryTotals: (
+    from: string,
+    to: string,
+    kind: "income" | "expense",
+    person?: string | null,
+    parent?: string | null,
+  ) =>
     call<Slice[]>(
-      `/category-totals?date_from=${from}&date_to=${to}&kind=${kind}${person ? `&person=${person}` : ""}`,
+      `/category-totals?date_from=${from}&date_to=${to}&kind=${kind}` +
+        `${person ? `&person=${person}` : ""}${parent ? `&parent=${parent}` : ""}`,
     ),
   personTotals: (from: string, to: string, kind: "income" | "expense") =>
     call<Slice[]>(`/person-totals?date_from=${from}&date_to=${to}&kind=${kind}`),

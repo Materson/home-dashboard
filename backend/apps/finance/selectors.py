@@ -53,7 +53,7 @@ def list_transactions(
         qs=Transaction.objects.all(),
         person_field="person_id",
         date_field="date",
-    ).select_related("category", "person")
+    ).select_related("category__parent", "person")
     if not f:
         return qs
     if f.q:
@@ -67,7 +67,10 @@ def list_transactions(
     if f.amount_max is not None:
         qs = qs.filter(amount__lte=f.amount_max)
     if f.category_keys:
-        qs = qs.filter(category__key__in=f.category_keys)
+        # A main category brings its sub-categories along.
+        qs = qs.filter(
+            Q(category__key__in=f.category_keys) | Q(category__parent__key__in=f.category_keys)
+        )
     if f.person_ids:
         # A split counts for each person in it.
         qs = qs.filter(
@@ -166,35 +169,41 @@ def category_totals(
     kind: str,
     person: str | None = None,
     currency: str = "PLN",
+    parent: UUID | None = None,
 ) -> list[Slice]:
-    """Per category, biggest first — the whole amount, or one person's part
-    (``person`` = id) or only unsplit household spending (``"shared"``)."""
+    """Per main category (sub-categories added into it), biggest first — the
+    whole amount, or one person's part (``person`` = id) or only unsplit
+    household spending (``"shared"``). With ``parent``: inside that one main
+    category, per sub-category (what was booked straight into the main one
+    keeps its key)."""
     base = list_transactions(
         ctx, TransactionFilter(date_from=date_from, date_to=date_to, kind=kind)
     ).filter(currency=currency)
+    if parent:
+        base = base.filter(Q(category_id=parent) | Q(category__parent_id=parent))
     if person and person != SHARED:
         rows = (
             TransactionShare.objects.filter(transaction__in=base, person_id=person)
-            .values(
-                "transaction__category_id",
-                "transaction__category__name",
-                "transaction__category__color",
-            )
+            .values("transaction__category_id")
             .annotate(total=Sum("amount"))
-        )
-        fields = (
-            "transaction__category_id",
-            "transaction__category__name",
-            "transaction__category__color",
+            .values_list("transaction__category_id", "total")
         )
     else:
         if person == SHARED:
             base = base.filter(shares__isnull=True)
-        rows = base.values("category_id", "category__name", "category__color").annotate(
-            total=Sum("amount")
+        rows = (
+            base.values("category_id")
+            .annotate(total=Sum("amount"))
+            .values_list("category_id", "total")
         )
-        fields = ("category_id", "category__name", "category__color")
-    out = [Slice(str(r[fields[0]]), r[fields[1]], r[fields[2]], r["total"]) for r in rows]
+    rows = list(rows)
+    cats = Category.objects.select_related("parent").in_bulk([cid for cid, _ in rows])
+    totals: dict[Category, Decimal] = {}
+    for cid, total in rows:
+        cat = cats[cid]
+        shown = cat if parent or cat.parent is None else cat.parent
+        totals[shown] = totals.get(shown, Decimal(0)) + total
+    out = [Slice(str(c.id), c.name, c.color, total) for c, total in totals.items()]
     return sorted(out, key=lambda s: -s.total)
 
 
@@ -240,7 +249,7 @@ def list_recurring(ctx: AccessContext) -> QuerySet[RecurringRule]:
         module="finance",
         qs=RecurringRule.objects.all(),
         person_field="person_id",
-    ).select_related("category", "person")
+    ).select_related("category__parent", "person")
 
 
 def list_loans(ctx: AccessContext) -> QuerySet[Loan]:

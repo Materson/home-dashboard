@@ -37,6 +37,26 @@ export function periodRange(mode: PeriodMode, ref: Date, range?: [Date, Date]): 
 
 export type PieSlice = { name: string; value: number; color: string; key: string };
 
+const GREY = "#868e96"; // a category's default colour
+const PALETTE = ["#228be6", "#fa5252", "#40c057", "#fab005", "#be4bdb", "#15aabf", "#fd7e14", "#e64980", "#82c91e", "#4c6ef5", "#12b886", "#7950f2"];
+
+/** Biggest first; a slice keeps its own colour unless it's the default grey
+ *  or a bigger slice already has it (sub-categories start in their main
+ *  one's colour) — those get unused palette colours, so slices stay apart. */
+export function distinctColors(slices: Slice[]): Slice[] {
+  const sorted = [...slices].sort((a, b) => Number(b.total) - Number(a.total));
+  const taken = new Set<string>();
+  const keep = sorted.map((s) => {
+    const color = (s.color || GREY).toLowerCase();
+    const own = color !== GREY && !taken.has(color);
+    if (own) taken.add(color);
+    return own;
+  });
+  const free = PALETTE.filter((c) => !taken.has(c));
+  let next = 0;
+  return sorted.map((s, i) => (keep[i] ? s : { ...s, color: free.length ? free[next++ % free.length] : GREY }));
+}
+
 /** Biggest ``keep`` slices; the rest summed as one "other" slice. */
 export function topSlices(slices: Slice[], keep: number, otherLabel: string, sharedLabel = ""): PieSlice[] {
   const sorted = [...slices].sort((a, b) => Number(b.total) - Number(a.total));

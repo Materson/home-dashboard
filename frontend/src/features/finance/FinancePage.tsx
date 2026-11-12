@@ -36,6 +36,8 @@ import {
   type Transaction,
   type TransactionFilters,
 } from "./api";
+import { categoryOptions, categoryPath } from "./categoryTree";
+import { renderCategoryOption } from "./CategoryOption";
 import { peopleApi } from "@/features/people/api";
 
 import { BookmarksBar } from "./BookmarksBar";
@@ -233,10 +235,12 @@ export function FinancePage() {
           />
           <MultiSelect
             placeholder={t("finance.search.category")}
-            data={(categoriesQ.data ?? []).map((c) => ({
-              value: c.id,
-              label: `${c.name} (${t(`finance.kind.${c.kind}`)})`,
+            // A main category also finds its sub-categories' transactions.
+            data={(["expense", "income"] as const).map((kind) => ({
+              group: t(`finance.chart.${kind}`),
+              items: categoryOptions((categoriesQ.data ?? []).filter((c) => c.kind === kind)),
             }))}
+            renderOption={renderCategoryOption}
             value={search.category_ids}
             onChange={(ids) => setSearch({ ...search, category_ids: ids })}
             searchable
@@ -280,7 +284,7 @@ export function FinancePage() {
                       {tx.name}
                     </Group>
                   </Table.Td>
-                  <Table.Td>{cat?.name ?? tx.category_id.slice(0, 8)}</Table.Td>
+                  <Table.Td>{cat ? categoryPath(cat, categoriesById) : tx.category_id.slice(0, 8)}</Table.Td>
                   <Table.Td>
                     {tx.shares.length ? (
                       <Avatar.Group spacing={6}>

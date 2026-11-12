@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { monthlyLine, periodRange, topSlices } from "./chartData";
+import { distinctColors, monthlyLine, periodRange, topSlices } from "./chartData";
 import { equalSplit, remainder, sharesValid } from "./shares";
 
 describe("equalSplit", () => {
@@ -47,6 +47,24 @@ describe("topSlices", () => {
       ["a", 40],
       ["b", 30],
       ["Pozostałe", 30],
+    ]);
+  });
+});
+
+describe("distinctColors", () => {
+  it("keeps own colours, recolours grey and repeated ones", () => {
+    const slice = (key: string, color: string, total: string) => ({ key, label: key, color, total });
+    const out = distinctColors([
+      slice("small", "#FF0000", "5"),
+      slice("fuel", "#ff0000", "300"),
+      slice("grey", "#868e96", "100"),
+      slice("blue", "#228be6", "50"),
+    ]);
+    expect(out.map((s) => [s.key, s.color])).toEqual([
+      ["fuel", "#ff0000"],
+      ["grey", "#fa5252"], // first free palette colour (blue is taken)
+      ["blue", "#228be6"],
+      ["small", "#40c057"],
     ]);
   });
 });

@@ -14,6 +14,8 @@ import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 import { isoDate, parseIsoDate } from "@/lib/format";
 
 import { type Category, financeApi, type RecurringEdit, type RecurringRule, type Repeat } from "./api";
+import { categoryOptions } from "./categoryTree";
+import { renderCategoryOption } from "./CategoryOption";
 import { repeatKind } from "./recurring";
 import { sharesValid } from "./shares";
 import { SharesEditor } from "./SharesEditor";
@@ -63,7 +65,8 @@ export function RecurringEditModal(props: { rule: RecurringRule | null; categori
             <AmountInput label={t("finance.field.amount")} value={form.amount} onChange={(amount) => setForm({ ...form, amount })} />
             <Select
               label={t("finance.field.category")}
-              data={categories.map((c) => ({ value: c.id, label: c.name }))}
+              data={categoryOptions(categories)}
+              renderOption={renderCategoryOption}
               value={form.category_id}
               onChange={(v) => v && setForm({ ...form, category_id: v })}
               allowDeselect={false}

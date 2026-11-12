@@ -837,5 +837,15 @@
   "investments.sharing": "Sharing",
   "investments.sharingHint": "Only you see this investment unless you share it.",
   "investments.sharedWith": "Shared with: {{names}}",
-  "investments.sharedBy": "Shared by: {{name}}"
+  "investments.sharedBy": "Shared by: {{name}}",
+  "finance.categories.parent": "Belongs to",
+  "finance.categories.asMain": "— a main category",
+  "finance.categories.newSubName": "New sub-category…",
+  "finance.categories.addSub": "Add a sub-category",
+  "finance.categories.hasSubHint": "It has sub-categories of its own, so it stays a main category.",
+  "finance.categories.mergeSubHint": "Its sub-categories move to the chosen category too.",
+  "finance.charts.allCategories": "All",
+  "finance.charts.inGroup": "{{title}}: {{name}}",
+  "finance.charts.groupItself": "{{name}} (no sub-category)",
+  "finance.charts.openGroup": "Show sub-categories"
 }

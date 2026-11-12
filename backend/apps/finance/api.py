@@ -42,12 +42,14 @@ class CategoryOut(Schema):
 class CategoryIn(Schema):
     name: str
     kind: Literal["expense", "income"] = "expense"
-    color: str = "#868e96"
+    color: str = ""  # empty: the main category's colour (or grey)
+    parent_id: UUID | None = None  # a sub-category of this main one
 
 
 class CategoryEdit(Schema):
     name: str
     color: str = ""
+    parent_id: UUID | None = None  # None: a main category
 
 
 class ShareSchema(Schema):
@@ -341,8 +343,10 @@ def category_totals(  # noqa: PLR0917 — query parameters
     kind: Literal["income", "expense"] = "expense",
     person: str | None = None,
     currency: str = "PLN",
+    parent: UUID | None = None,
 ) -> list[selectors.Slice]:
-    """Pie chart data: totals per category, biggest first."""
+    """Pie chart data: totals per main category, biggest first; with
+    ``parent``, that main category split into its sub-categories."""
     return selectors.category_totals(
         get_ctx(request),
         date_from=date_from,
@@ -350,6 +354,7 @@ def category_totals(  # noqa: PLR0917 — query parameters
         kind=kind,
         person=person,
         currency=currency,
+        parent=parent,
     )
 
 

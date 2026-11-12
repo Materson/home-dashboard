@@ -295,3 +295,22 @@ def test_settings_are_admin_only_and_keys_never_returned(home, client):
         content_type="application/json",
     )
     assert resp.status_code == 422
+
+
+def test_finance_tools_know_sub_categories():
+    from apps.assistant.tools import ToolError  # noqa: PLC0415
+    from apps.assistant.tools.finance import _category, _path  # noqa: PLC0415
+    from apps.finance.models import Category  # noqa: PLC0415
+
+    fuel = Category.objects.get(key="car.fuel")
+    assert _category("Samochód / Paliwo") == fuel
+    assert _category("samochód › paliwo") == fuel  # noqa: RUF001 — the UI's separator
+    assert _path(fuel) == "Samochód / Paliwo"
+    rent = Category.objects.get(key="home.rent")
+    assert _category(rent.name) == rent  # a name with "/" in it
+    for parent in ("car", "home"):
+        Category.objects.create(
+            key=f"user.{parent}x", name="Inne", parent=Category.objects.get(key=parent)
+        )
+    with pytest.raises(ToolError, match=r"ambiguous.*Dom / Inne.*Samochód / Inne"):
+        _category("Inne")

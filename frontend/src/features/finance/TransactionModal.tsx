@@ -33,6 +33,8 @@ import { isoDate, parseIsoDate } from "@/lib/format";
 import { cabinetApi } from "@/features/health/api";
 
 import { financeApi, type Category, type Repeat, type Transaction } from "./api";
+import { categoryOptions, mainOf } from "./categoryTree";
+import { renderCategoryOption } from "./CategoryOption";
 import { type Share, sharesValid } from "./shares";
 import { SharesEditor } from "./SharesEditor";
 
@@ -85,7 +87,10 @@ export function TransactionModal(props: {
 
   // Health purchases (e.g. medicines bought at the pharmacy) can be linked to
   // a cabinet medicine, so the medicine shows what was paid for it.
-  const isHealthCategory = !!categoriesById[form.category_id]?.key.startsWith("health");
+  // (also a sub-category someone added under Zdrowie)
+  const picked = categoriesById[form.category_id];
+  const isHealthCategory =
+    !!picked && [picked.key, mainOf(picked, categoriesById).key].some((k) => k.startsWith("health"));
   const cabinet = useQuery({
     queryKey: ["cabinet", "", "all", false],
     queryFn: () => cabinetApi.list("", "all", false),
@@ -172,7 +177,8 @@ export function TransactionModal(props: {
           placeholder={t(
             categoriesForKind.length ? "finance.field.categoryPick" : "finance.field.categoryNone",
           )}
-          data={categoriesForKind.map((c) => ({ value: c.id, label: c.name }))}
+          data={categoryOptions(categoriesForKind)}
+          renderOption={renderCategoryOption}
           value={form.category_id}
           onChange={(v) => setForm({ ...form, category_id: v ?? "" })}
           searchable

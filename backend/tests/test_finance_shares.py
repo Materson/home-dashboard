@@ -9,6 +9,7 @@ from decimal import Decimal
 
 import pytest
 from dateutil.relativedelta import relativedelta
+from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 
 from apps.access.context import AccessContext
@@ -282,7 +283,8 @@ def test_chart_totals_per_person_and_category(fam):
     shared = selectors.category_totals(fam["ctx"], kind="expense", person="shared", **period)
     assert [s.total for s in shared] == [Decimal("100")]
     income = selectors.category_totals(fam["ctx"], kind="income", **period)
-    assert [(s.label, s.total) for s in income] == [(fam["salary"].name, Decimal("5000"))]
+    # Wynagrodzenie is a sub-category: the pie shows its main one
+    assert [(s.label, s.total) for s in income] == [(fam["salary"].parent.name, Decimal("5000"))]
 
     months = selectors.monthly_totals(
         fam["ctx"], until=date(2026, 3, 31), months=1, person=str(fam["wife"].id)
@@ -364,3 +366,109 @@ def test_category_api_lists_usage(client, fam):
     )
     assert resp.status_code == 200 and resp.json()["used"] == 0
     assert client.delete(f"/api/finance/categories/{resp.json()['id']}").json() == {"deleted": True}
+
+
+# ---------------- sub-categories ----------------
+
+
+def test_sub_categories(fam):
+    ctx = fam["ctx"]
+    car = Category.objects.get(key="car")
+    fuel = Category.objects.get(key="car.fuel")
+    pets = services.create_category(ctx, name="Zwierzęta", kind="expense", color="#ff0000")
+    food = services.create_category(ctx, name="Karma", kind="expense", parent_id=pets.id)
+    assert food.parent == pets and food.color == "#ff0000"  # the main one's colour
+    # "Inne" may sit under two main categories, but not twice under one
+    services.create_category(ctx, name="Inne", kind="expense", parent_id=pets.id)
+    services.create_category(ctx, name="Inne", kind="expense", parent_id=car.id)
+    with pytest.raises(ValueError, match="already exists"):
+        services.create_category(ctx, name="inne", kind="expense", parent_id=car.id)
+    for parent, message in ((fam["salary"].parent, "same kind"), (food, "of its own")):
+        with pytest.raises(ValueError, match=message):
+            services.create_category(ctx, name="X", kind="expense", parent_id=parent.id)
+
+    # move: a built-in one under another main category; two levels, no loops
+    services.update_category(ctx, fuel.id, name=fuel.name, color="", parent_id=pets.id)
+    assert Category.objects.get(key="car.fuel").parent == pets
+    with pytest.raises(ValueError, match="under itself"):
+        services.update_category(ctx, pets.id, name="Zwierzęta", color="", parent_id=pets.id)
+    with pytest.raises(ValueError, match="stays a main category"):
+        services.update_category(ctx, pets.id, name="Zwierzęta", color="", parent_id=car.id)
+    services.update_category(ctx, food.id, name="Karma", color="", parent_id=None)
+    assert Category.objects.get(pk=food.pk).parent is None
+
+    # a main one with sub-categories: not deleted, merged only into a main one
+    with pytest.raises(ValueError, match="move or delete"):
+        services.delete_category(ctx, pets.id)
+    maintenance = Category.objects.get(key="car.maintenance")
+    with pytest.raises(ValueError, match="another main category"):
+        services.merge_category(ctx, pets.id, maintenance.id)
+    services.merge_category(ctx, pets.id, car.id)
+    assert Category.objects.get(key="car.fuel").parent == car  # came along
+
+
+def test_only_finance_editors_arrange_categories(fam):
+    viewer = UserFactory()
+    AccessGrantFactory(user=viewer, module="finance", level="view")
+    ctx = AccessContext.for_user(viewer)
+    car = Category.objects.get(key="car")
+    with pytest.raises(PermissionDenied):
+        services.create_category(ctx, name="Myjnia", kind="expense", parent_id=car.id)
+    fuel = Category.objects.get(key="car.fuel")
+    with pytest.raises(PermissionDenied):
+        services.update_category(ctx, fuel.id, name="Paliwo", color="", parent_id=None)
+    assert Category.objects.get(key="car.fuel").parent == car
+
+
+def test_charts_and_filter_take_sub_categories_along(fam):
+    car = Category.objects.get(key="car")
+    fuel = Category.objects.get(key="car.fuel")
+    inspection = Category.objects.get(key="car.inspection")
+    tx(fam, "200", category=fuel)
+    tx(fam, "100", category=fuel, person=fam["kid"])
+    tx(fam, "150", category=inspection)
+    tx(fam, "50", category=car)  # straight into the main one
+    period = {"date_from": date(2026, 3, 1), "date_to": date(2026, 3, 31)}
+
+    [main] = selectors.category_totals(fam["ctx"], kind="expense", **period)
+    assert (main.key, main.label, main.total) == (str(car.id), car.name, Decimal("500"))
+    inside = selectors.category_totals(fam["ctx"], kind="expense", parent=car.id, **period)
+    assert [(s.label, s.total) for s in inside] == [
+        (fuel.name, Decimal("300")),
+        (inspection.name, Decimal("150")),
+        (car.name, Decimal("50")),
+    ]
+    kid = selectors.category_totals(
+        fam["ctx"], kind="expense", parent=car.id, person=str(fam["kid"].id), **period
+    )
+    assert [(s.label, s.total) for s in kid] == [(fuel.name, Decimal("100"))]
+
+    def count(*keys):
+        f = selectors.TransactionFilter(category_keys=list(keys))
+        return selectors.list_transactions(fam["ctx"], f).count()
+
+    assert (count("car"), count("car.fuel"), count("car.inspection", "car.fuel")) == (4, 2, 3)
+
+
+def test_sub_category_api(client, fam):
+    client.force_login(UserFactory(is_superuser=True))
+    car = Category.objects.get(key="car")
+    resp = client.post(
+        "/api/finance/categories",
+        {"name": "Myjnia", "parent_id": str(car.id)},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200 and resp.json()["parent_id"] == str(car.id)
+    wash = resp.json()["id"]
+    resp = client.put(
+        f"/api/finance/categories/{car.id}",
+        {"name": car.name, "parent_id": str(Category.objects.get(key="home").id)},
+        content_type="application/json",
+    )
+    assert resp.status_code == 422 and "main category" in resp.json()["detail"]
+    tx(fam, "30", category=Category.objects.get(pk=wash))
+    rows = client.get(
+        "/api/finance/category-totals",
+        {"date_from": "2026-03-01", "date_to": "2026-03-31", "parent": str(car.id)},
+    ).json()
+    assert [(r["label"], r["total"]) for r in rows] == [("Myjnia", "30.00")]

@@ -14,6 +14,7 @@ import type { Person } from "@/features/people/api";
 import { fmtDate, fmtMoney } from "@/lib/format";
 
 import { type Category, financeApi, type RecurringRule } from "./api";
+import { categoryPath } from "./categoryTree";
 import { RecurringEditModal } from "./RecurringEditModal";
 import { repeatKind } from "./recurring";
 
@@ -60,7 +61,8 @@ export function RecurringModal(props: {
                   {r.name}
                 </Text>
                 <Text size="xs" c="dimmed">
-                  {props.categoriesById[r.category_id]?.name}
+                  {props.categoriesById[r.category_id] &&
+                    categoryPath(props.categoriesById[r.category_id], props.categoriesById)}
                 </Text>
               </Table.Td>
               <Table.Td>{t(`finance.repeat.${repeatKind(r.rrule)}`)}</Table.Td>
