@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from dateutil.rrule import rrulestr
 from django.contrib.contenttypes.models import ContentType
@@ -236,10 +236,9 @@ def create_category(
     name = _clean_name(name)
     parent = _parent_for(kind, parent_id)
     _check_unique(name, kind, parent)
-    from apps.core.uuid7 import uuid7  # noqa: PLC0415
-
     return Category.objects.create(
-        key=f"user.{uuid7().hex[:12]}",
+        # Random, not time-based: two made in the same millisecond must differ.
+        key=f"user.{uuid4().hex[:12]}",
         name=name,
         kind=kind,
         parent=parent,
