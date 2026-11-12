@@ -2,6 +2,7 @@ import { AppShell, Burger, Group, NavLink, Text } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { AssistantButton } from "@/features/assistant/AssistantButton";
 import { usePermissions, type ModuleKey } from "@/features/auth/usePermissions";
 
 type NavItem = { to: string; labelKey: string; module: ModuleKey | null };
@@ -92,6 +93,7 @@ export function AppShellLayout({ children }: { children: React.ReactNode }) {
         })}
       </AppShell.Navbar>
       <AppShell.Main>{children}</AppShell.Main>
+      <AssistantButton />
     </AppShell>
   );
 }
