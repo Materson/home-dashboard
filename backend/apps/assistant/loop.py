@@ -42,7 +42,8 @@ Rules:
 - Facts about the family come only from your tools. Never invent numbers, dates or names; if a tool has no data, say so.
 - People may appear as aliases like [P1]. Use them exactly as written (they are turned back into names for the user); never guess real names, addresses or identifiers.
 - Each user message starts with today's date and the page the user is on, in square brackets; "this car", "her", "here" usually refer to that page.
-- Changes: use the propose_* tools for money, cars and anything not the user's own; the user confirms a card — say it is waiting for confirmation, never that it is saved. add_note and add_to_shopping_list save at once (the user can undo).
+- Changes: use the propose_* tools for money, cars and anything not the user's own (saved only when the user confirms); add_note and add_to_shopping_list save at once (the user can undo). The user sees every change in the chat right away, so after making one reply with an empty message. Write only what the change doesn't show — a value you assumed, or a question — in one short sentence. Never describe the change, say it is saved or ready, ask the user to confirm it, or offer to change it.
+- Earlier changes appear in the history as [kind status: details] (proposed = still waiting, done = confirmed/saved, cancelled, undone, failed).
 - If the user attaches a receipt, odometer photo or invoice, read it and propose the matching entry; ask for missing required values instead of guessing (e.g. the odometer for a fuel entry). A lab result photo/PDF → propose_lab_result (the file is attached to it automatically).
 - Health changes are always proposals. A symptom belongs to an ongoing illness/event (propose_symptom); if there is none, propose_health_event with the symptoms in it. Ask who it is about when unclear.
 - Health: give information from the family's own records and the medicine cabinet (doses from the dosing rule); remind briefly to follow the leaflet or a doctor when giving doses. Not a diagnosis.
@@ -66,6 +67,14 @@ def _header(page: str, ctx: AccessContext) -> str:
     where = page_context.describe(page, ctx)
     text = f"[Dziś: {WEEKDAYS[now.weekday()]} {now:%d.%m.%Y %H:%M}"
     return text + (f". Strona: {where}]" if where else "]")
+
+
+def _history_text(message: Message) -> str:
+    """An earlier message as the model sees it: a reply also lists the changes
+    made in it and what became of them (the reply itself is often empty — the
+    user saw the change in the chat)."""
+    notes = [f"[{a.kind} {a.status}: {_json(a.payload)}]" for a in message.actions.all()]
+    return "\n".join([message.text, *notes]).strip()
 
 
 def _json(value: Any) -> str:
@@ -110,9 +119,10 @@ def run_turn(  # noqa: PLR0915 — one readable pass through the turn
     earlier = list(
         conversation.messages.filter(error=False)
         .exclude(pk=user_message.pk)
+        .prefetch_related("actions")
         .order_by("-created_at")[:HISTORY_TURNS]
     )[::-1]
-    history = [ChatMessage(m.role, pz.hide(m.text)) for m in earlier if m.text]
+    history = [ChatMessage(m.role, pz.hide(text)) for m in earlier if (text := _history_text(m))]
     current = ChatMessage(
         "user", pz.hide(f"{_header(user_message.page, ctx)}\n\n{user_message.text}"), images
     )
@@ -152,7 +162,7 @@ def run_turn(  # noqa: PLR0915 — one readable pass through the turn
         calls.append(call)
 
         if not turn.tool_calls:
-            answer = pz.reveal(turn.text)
+            answer = pz.reveal(turn.text).strip()
             break
         results = []
         for tc in turn.tool_calls:
@@ -172,7 +182,10 @@ def run_turn(  # noqa: PLR0915 — one readable pass through the turn
         conversation.title = user_message.text[:60] or "Zdjęcie"
     conversation.save(update_fields=["aliases", "title", "updated_at"])
 
-    reply = _reply(conversation, answer or "(brak odpowiedzi)", error=error)
+    # Next to a change an empty reply is expected: the change shows in the chat.
+    reply = _reply(
+        conversation, answer or ("" if run.actions else "(brak odpowiedzi)"), error=error
+    )
     for c in calls:
         c.message = reply
         c.save(update_fields=["message"])

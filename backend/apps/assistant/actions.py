@@ -313,7 +313,10 @@ def propose(run: ToolRun, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "proposed",
         "shown_to_user": payload,
-        "next": "The user sees this as a card with Confirm / Cancel. Do not say it is saved.",
+        "next": (
+            "Shown to the user to confirm; not saved yet. Reply with an empty message, or "
+            "one short sentence only for what it doesn't show (an assumption, a question)."
+        ),
     }
 
 
@@ -325,7 +328,14 @@ def do_now(run: ToolRun, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
     _run(run.ctx, action)
     if action.status == PendingAction.Status.FAILED:
         return {"status": "failed", "error": action.error}
-    return {"status": "done", "saved": payload, "next": "Saved; the user can undo it."}
+    return {
+        "status": "done",
+        "saved": payload,
+        "next": (
+            "Saved and shown to the user (with undo). Reply with an empty message, or one "
+            "short sentence only for what it doesn't show."
+        ),
+    }
 
 
 def _run(ctx: AccessContext, action: PendingAction) -> None:

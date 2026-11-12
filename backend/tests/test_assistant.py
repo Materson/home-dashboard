@@ -371,3 +371,40 @@ def test_openrouter_profile_is_a_cloud_one_with_a_key(home, monkeypatch, client)
     assert seen["key"] == "sk-or"  # asked with that profile's key
     client.force_login(home["parent_user"])
     assert client.get("/api/assistant/openrouter/models").status_code == 403
+
+
+def test_a_change_needs_no_words_and_the_history_keeps_it(home, fake):
+    cat = Category.objects.filter(kind="expense").first()
+    model = fake(
+        Turn(
+            text="",
+            tool_calls=[
+                ToolCall(
+                    "1",
+                    "propose_transaction",
+                    {
+                        "kind": "expense",
+                        "amount": 12,
+                        "name": "Kawa dla Zosi",
+                        "category": cat.name,
+                    },
+                )
+            ],
+        ),
+        Turn(text=" ", tool_calls=[]),  # nothing to add: the user sees the proposal
+        Turn(text="Zmienione.", tool_calls=[]),
+    )
+    conv, answer = ask(home["parent"], "kawa 12 zł")
+    assert answer.text == "" and not answer.error and answer.actions.count() == 1
+    actions.cancel(home["parent"], answer.actions.get().id)
+
+    services.send_message(home["parent"], conv.id, text="jednak 14 zł", files=None, page="")
+    earlier = model.sessions[1].history[1]  # the empty reply, as the model now sees it
+    assert earlier.role == "assistant" and "[finance.transaction cancelled:" in earlier.text
+    assert "Zosi" not in earlier.text and "[P" in earlier.text  # still aliased for the cloud
+
+
+def test_no_reply_without_a_change_says_so(home, fake):
+    fake(Turn(text="", tool_calls=[]))
+    _, answer = ask(home["parent"], "?")
+    assert answer.text == "(brak odpowiedzi)"
