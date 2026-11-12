@@ -78,8 +78,10 @@ export function ChatPanel(props: {
     onMutate: (v) => setSending(v),
     onSettled: () => setSending(null),
     onSuccess: ({ target, result }) => {
+      // The list may have been reloaded meanwhile (e.g. back to the tab): no doubles.
+      const added = new Set([result.question.id, result.answer.id]);
       qc.setQueryData<Message[]>([...ASSISTANT_KEY, "messages", target.id], (old) => [
-        ...(old ?? []),
+        ...(old ?? []).filter((m) => !added.has(m.id)),
         result.question,
         result.answer,
       ]);

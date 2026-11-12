@@ -38,6 +38,11 @@ export function AssistantPage() {
   const selectedId = params.get("c");
   const selected = conversations.data?.find((c) => c.id === selectedId) ?? null;
   const select = (id: string | null) => setParams(id ? { c: id } : {}, { replace: true });
+  // The panel that started a conversation keeps showing it, with its pending
+  // message and "thinking…" (a new panel would lose them); picking another
+  // conversation, or "new", gives a fresh panel.
+  const [startedId, setStartedId] = useState<string | null>(null);
+  const panelKey = selectedId && selectedId !== startedId ? selectedId : `new-${fresh}`;
   const remove = useMutation({
     mutationFn: assistantApi.deleteConversation,
     onSuccess: (_, id) => {
@@ -57,6 +62,7 @@ export function AssistantPage() {
             variant="light"
             onClick={() => {
               select(null);
+              setStartedId(null);
               setFresh((n) => n + 1);
             }}
           >
@@ -117,9 +123,10 @@ export function AssistantPage() {
               </Badge>
             )}
             <ChatPanel
-              key={selected?.id ?? `new-${fresh}`}
+              key={panelKey}
               conversation={selected}
               onStarted={(c) => {
+                setStartedId(c.id);
                 qc.invalidateQueries({ queryKey: [...ASSISTANT_KEY, "conversations"] });
                 select(c.id);
               }}

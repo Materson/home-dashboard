@@ -78,7 +78,9 @@ export function AssistantButton() {
         }
       >
         <ChatPanel
-          key={conversation?.id ?? `new-${fresh}`}
+          // Not keyed by the conversation: the panel that starts one keeps it
+          // (with its pending message); "new" gives a fresh panel.
+          key={`new-${fresh}`}
           conversation={conversation}
           onStarted={(c) => {
             setConversation(c);
