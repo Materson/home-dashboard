@@ -135,6 +135,11 @@ class AccessContext:
             raise PermissionDenied(f"{module}:{level} denied")
         if obj is None:
             return
+        # Objects with their own rule (e.g. a note: owner or shared with).
+        check = getattr(obj, "check_access", None)
+        if callable(check):
+            check(self, level)
+            return
         person_field = getattr(obj, "_access_person_field", None) or getattr(
             type(obj)._meta,
             "access_person_field",

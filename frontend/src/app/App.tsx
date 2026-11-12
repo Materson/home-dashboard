@@ -10,6 +10,7 @@ import { CarsPage } from "@/features/cars/CarsPage";
 import { HealthChooserPage } from "@/features/health/HealthChooserPage";
 import { HealthPersonPage } from "@/features/health/HealthPersonPage";
 import { HouseholdPage } from "@/features/household/HouseholdPage";
+import { NotesPage } from "@/features/notes/NotesPage";
 import { PeoplePage } from "@/features/people/PeoplePage";
 import { PersonPage } from "@/features/people/PersonPage";
 import { CabinetPage } from "@/features/health/CabinetPage";
@@ -40,6 +41,7 @@ export function App() {
         <Route path="/health/cabinet" element={<CabinetPage />} />
         <Route path="/health/:personId" element={<HealthPersonPage />} />
         <Route path="/household" element={<HouseholdPage />} />
+        <Route path="/notes" element={<NotesPage />} />
         <Route path="/people" element={<PeoplePage />} />
         <Route path="/people/:personId" element={<PersonPage />} />
         <Route path="/auth/*" element={<Navigate to="/" replace />} />

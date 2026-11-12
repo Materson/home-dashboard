@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "apps.cars",
     "apps.health",
     "apps.household",
+    "apps.notes",
 ]
 
 MIDDLEWARE = [
