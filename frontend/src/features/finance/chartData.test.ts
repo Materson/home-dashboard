@@ -78,3 +78,15 @@ describe("repeatKind", () => {
   });
 });
 
+describe("investment chart axis", () => {
+  it("hugs the data so small growth is visible", async () => {
+    const { valueDomain } = await import("@/features/investments/InvestmentsPage");
+    const [lo, hi] = valueDomain([
+      { date: "2026-01-01", value: "10000", cost: "10000" },
+      { date: "2026-06-01", value: "10300", cost: "10000" },
+    ]);
+    expect(lo).toBeGreaterThan(9900);
+    expect(hi).toBeLessThan(10400);
+    expect(valueDomain([])).toEqual([0, 1]);
+  });
+});

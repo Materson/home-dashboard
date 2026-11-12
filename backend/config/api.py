@@ -13,6 +13,7 @@ from apps.core.api import router as core_router
 from apps.finance.api import router as finance_router
 from apps.health.api import router as health_router
 from apps.household.api import router as household_router
+from apps.investments.api import router as investments_router
 from apps.notes.api import router as notes_router
 from apps.assistant.api import router as assistant_router
 from apps.notifications.api import router as notifications_router
@@ -39,6 +40,7 @@ api.add_router("/finance", finance_router, tags=["finance"])
 api.add_router("/cars", cars_router, tags=["cars"])
 api.add_router("/health", health_router, tags=["health"])
 api.add_router("/household", household_router, tags=["household"])
+api.add_router("/investments", investments_router, tags=["investments"])
 api.add_router("/notes", notes_router, tags=["notes"])
 api.add_router("/assistant", assistant_router, tags=["assistant"])
 api.add_router("", core_router, tags=["core"])
