@@ -314,3 +314,60 @@ def test_finance_tools_know_sub_categories():
         )
     with pytest.raises(ToolError, match=r"ambiguous.*Dom / Inne.*Samochód / Inne"):
         _category("Inne")
+
+
+def test_openrouter_profile_is_a_cloud_one_with_a_key(home, monkeypatch, client):
+    ctx = home["parent"]
+    admin = AccessContext.for_user(UserFactory(is_superuser=True))
+    data = {
+        "name": "OR",
+        "kind": "openrouter",
+        "model": "anthropic/claude-opus-4.5",
+        "location": "local",
+    }
+    with pytest.raises(ValueError, match="API key"):
+        services.save_profile(admin, dict(data))
+    profile = services.save_profile(admin, {**data, "api_key": "sk-or", "base_url": "http://x"})
+    # hosted on the internet: never treated as local (it would get local-only data)
+    assert (profile.location, profile.base_url) == ("cloud", "")
+    claude = services.save_profile(
+        admin,
+        {
+            "name": "C",
+            "kind": "anthropic",
+            "model": "m",
+            "api_key": "k",
+            "location": "local",
+            "allow_data_collection": True,
+        },
+    )
+    assert (claude.location, claude.allow_data_collection) == ("cloud", False)  # OpenRouter only
+    free = services.save_profile(admin, {**data, "allow_data_collection": True}, profile.id)
+    assert free.allow_data_collection and free.api_key == "sk-or"  # key kept
+    with pytest.raises(PermissionDenied):  # only an admin arranges AI providers
+        services.save_profile(ctx, {**data, "api_key": "sk-or"})
+
+    from apps.assistant.llm import openrouter  # noqa: PLC0415
+
+    seen = {}
+
+    def fake_tool_models(key=""):
+        seen["key"] = key
+        return [openrouter.Model("a/b", "B", True, True, 1000, "1", "2")]
+
+    monkeypatch.setattr(openrouter, "tool_models", fake_tool_models)
+    client.force_login(UserFactory(is_superuser=True))
+    rows = client.get(f"/api/assistant/openrouter/models?profile_id={profile.id}").json()
+    assert rows == [
+        {
+            "id": "a/b",
+            "name": "B",
+            "vision": True,
+            "context": 1000,
+            "price_in": "1",
+            "price_out": "2",
+        }
+    ]
+    assert seen["key"] == "sk-or"  # asked with that profile's key
+    client.force_login(home["parent_user"])
+    assert client.get("/api/assistant/openrouter/models").status_code == 403

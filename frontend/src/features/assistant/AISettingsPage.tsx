@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import {
   ActionIcon,
   Alert,
+  Autocomplete,
   Badge,
   Button,
   Group,
@@ -24,14 +25,24 @@ import {
   Title,
   Tooltip,
 } from "@mantine/core";
-import { IconPencil, IconPlugConnected, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconAlertTriangle,
+  IconPencil,
+  IconPhoto,
+  IconPlugConnected,
+  IconPlus,
+  IconShieldLock,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
 
 import {
   type AISettings,
   ASSISTANT_KEY,
   assistantApi,
+  type OpenRouterModel,
   type Policy,
   type Profile,
   type ProfilePayload,
@@ -39,7 +50,9 @@ import {
 } from "./api";
 
 const MODULES = ["finance", "cars", "household", "people", "health", "notes", "documents"] as const;
-const KINDS: ProviderKind[] = ["anthropic", "openai", "google", "ollama", "openai_compatible"];
+const KINDS: ProviderKind[] = ["anthropic", "openai", "google", "openrouter", "ollama", "openai_compatible"];
+/** Services on the internet: need a key, always "cloud" (the server enforces it too). */
+const HOSTED: ProviderKind[] = ["anthropic", "openai", "google", "openrouter"];
 const KEY = [...ASSISTANT_KEY, "settings"];
 
 export function AISettingsPage() {
@@ -67,7 +80,7 @@ export function AISettingsPage() {
   if (status.data && !status.data.can_manage) {
     return (
       <Stack>
-        <Title order={2}>{t("nav.settings")}</Title>
+        <PageHeader title={t("nav.settings")} />
         <Text c="dimmed">{t("settings.nothingForYou")}</Text>
       </Stack>
     );
@@ -78,7 +91,7 @@ export function AISettingsPage() {
 
   return (
     <Stack gap="lg">
-      <Title order={2}>{t("settings.ai.title")}</Title>
+      <PageHeader title={t("settings.ai.title")} subtitle={t("page.settings.subtitle")} />
 
       <Paper withBorder p="md">
         <Group justify="space-between" mb="sm">
@@ -110,6 +123,11 @@ export function AISettingsPage() {
                     {p.vision && (
                       <Badge size="sm" variant="outline" color="gray">
                         {t("settings.ai.vision")}
+                      </Badge>
+                    )}
+                    {p.kind === "openrouter" && p.allow_data_collection && (
+                      <Badge size="sm" variant="outline" color="orange">
+                        {t("settings.ai.mayStore")}
                       </Badge>
                     )}
                   </Group>
@@ -225,6 +243,7 @@ function ProfileModal(props: { profile: Profile | null | "new"; onClose: () => v
     api_key: "",
     location: "cloud",
     vision: true,
+    allow_data_collection: false,
     enabled: true,
   };
   const [form, setForm] = useState<ProfilePayload>(blank);
@@ -242,7 +261,7 @@ function ProfileModal(props: { profile: Profile | null | "new"; onClose: () => v
     },
   });
   const needsUrl = form.kind === "ollama" || form.kind === "openai_compatible";
-  const needsKey = ["anthropic", "openai", "google"].includes(form.kind);
+  const hosted = HOSTED.includes(form.kind);
 
   return (
     <Modal opened={props.profile !== null} onClose={props.onClose} title={t(editing ? "settings.ai.editProfile" : "settings.ai.addProfile")}>
@@ -258,18 +277,56 @@ function ProfileModal(props: { profile: Profile | null | "new"; onClose: () => v
             setForm((f) => ({
               ...f,
               kind,
-              location: kind === "ollama" ? "local" : f.location,
-              model: kind === "anthropic" && !f.model ? "claude-opus-5-5" : f.model,
+              location: HOSTED.includes(kind) ? "cloud" : kind === "ollama" ? "local" : f.location,
+              model:
+                kind === "anthropic" && !f.model
+                  ? "claude-opus-5-5"
+                  : kind === "openrouter" && !f.model.includes("/")
+                    ? "" // OpenRouter ids are "provider/model": pick one from its list
+                    : f.model,
             }));
           }}
         />
-        <TextInput
-          label={t("settings.ai.f.model")}
-          description={t(`settings.ai.modelHint.${form.kind}`)}
-          required
-          value={form.model}
-          onChange={(e) => set("model", e.currentTarget.value)}
-        />
+        {form.kind === "openrouter" ? (
+          <OpenRouterModelInput
+            value={form.model}
+            onChange={(v) => set("model", v)}
+            onPick={(m) => set("vision", m.vision)}
+            profileId={editing?.id}
+          />
+        ) : (
+          <TextInput
+            label={t("settings.ai.f.model")}
+            description={t(`settings.ai.modelHint.${form.kind}`)}
+            required
+            value={form.model}
+            onChange={(e) => set("model", e.currentTarget.value)}
+          />
+        )}
+        {form.kind === "openrouter" && (
+          <>
+            <Switch
+              label={t("settings.ai.f.allowDataCollection")}
+              description={t("settings.ai.f.allowDataCollectionHint")}
+              checked={form.allow_data_collection}
+              onChange={(e) => set("allow_data_collection", e.currentTarget.checked)}
+            />
+            {form.allow_data_collection ? (
+              <Alert variant="light" color="orange" icon={<IconAlertTriangle size={18} />} p="xs">
+                <Text size="xs">{t("settings.ai.openrouter.mayStore")}</Text>
+              </Alert>
+            ) : (
+              <Alert variant="light" color="teal" icon={<IconShieldLock size={18} />} p="xs">
+                <Text size="xs">{t("settings.ai.openrouter.privacy")}</Text>
+                {form.model.endsWith(":free") && (
+                  <Text size="xs" c="orange" mt={4}>
+                    {t("settings.ai.openrouter.freeNeedsSwitch")}
+                  </Text>
+                )}
+              </Alert>
+            )}
+          </>
+        )}
         {needsUrl && (
           <TextInput
             label={t("settings.ai.f.baseUrl")}
@@ -280,22 +337,23 @@ function ProfileModal(props: { profile: Profile | null | "new"; onClose: () => v
         )}
         <PasswordInput
           label={t("settings.ai.f.apiKey")}
-          description={editing?.has_key ? t("settings.ai.f.apiKeyKeep") : needsKey ? undefined : t("settings.ai.f.apiKeyOptional")}
-          required={needsKey && !editing?.has_key}
+          description={editing?.has_key ? t("settings.ai.f.apiKeyKeep") : hosted ? undefined : t("settings.ai.f.apiKeyOptional")}
+          required={hosted && !editing?.has_key}
           value={form.api_key}
           onChange={(e) => set("api_key", e.currentTarget.value)}
           autoComplete="new-password"
         />
         <SegmentedControl
-          value={form.location}
+          value={hosted ? "cloud" : form.location}
           onChange={(v) => set("location", v as ProfilePayload["location"])}
+          disabled={hosted}
           data={[
             { value: "cloud", label: t("assistant.location.cloud") },
             { value: "local", label: t("assistant.location.local") },
           ]}
         />
         <Text size="xs" c="dimmed">
-          {t("settings.ai.f.locationHint")}
+          {t(hosted ? "settings.ai.f.cloudOnly" : "settings.ai.f.locationHint")}
         </Text>
         <Switch label={t("settings.ai.f.vision")} checked={form.vision} onChange={(e) => set("vision", e.currentTarget.checked)} />
         <Switch label={t("settings.ai.f.enabled")} checked={form.enabled} onChange={(e) => set("enabled", e.currentTarget.checked)} />
@@ -305,5 +363,56 @@ function ProfileModal(props: { profile: Profile | null | "new"; onClose: () => v
         </Button>
       </Stack>
     </Modal>
+  );
+}
+
+/** OpenRouter's model id, picked from its list of models that can use the
+ *  assistant's tools (with price and photo support); typing works too. */
+function OpenRouterModelInput(props: {
+  value: string;
+  onChange: (id: string) => void;
+  onPick: (model: OpenRouterModel) => void;
+  profileId?: string;
+}) {
+  const { t } = useTranslation();
+  const models = useQuery({
+    queryKey: [...ASSISTANT_KEY, "openrouter-models", props.profileId ?? ""],
+    queryFn: () => assistantApi.openrouterModels(props.profileId),
+    staleTime: 3_600_000,
+    retry: false,
+  });
+  const byId = new Map((models.data ?? []).map((m) => [m.id, m]));
+  return (
+    <Autocomplete
+      label={t("settings.ai.f.model")}
+      description={t(models.isError ? "settings.ai.openrouter.modelsError" : "settings.ai.modelHint.openrouter")}
+      placeholder="anthropic/claude-opus-4.5"
+      required
+      data={(models.data ?? []).map((m) => m.id)}
+      limit={50}
+      maxDropdownHeight={320}
+      value={props.value}
+      onChange={props.onChange}
+      onOptionSubmit={(id) => {
+        const m = byId.get(id);
+        if (m) props.onPick(m);
+      }}
+      renderOption={({ option }) => {
+        const m = byId.get(option.value);
+        return (
+          <Stack gap={0}>
+            <Group gap={6} wrap="nowrap">
+              <Text size="sm">{option.value}</Text>
+              {m?.vision && <IconPhoto size={14} color="var(--mantine-color-dimmed)" aria-label={t("settings.ai.f.vision")} />}
+            </Group>
+            {m?.price_in != null && (
+              <Text size="xs" c="dimmed">
+                {t("settings.ai.openrouter.price", { in: m.price_in, out: m.price_out ?? "?" })}
+              </Text>
+            )}
+          </Stack>
+        );
+      }}
+    />
   );
 }

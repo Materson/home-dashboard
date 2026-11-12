@@ -27,6 +27,7 @@ class ProviderProfile(UUIDModel, TimeStamped):
         ANTHROPIC = "anthropic", "Anthropic (Claude)"
         OPENAI = "openai", "OpenAI (ChatGPT)"
         GOOGLE = "google", "Google (Gemini)"
+        OPENROUTER = "openrouter", "OpenRouter"
         OLLAMA = "ollama", "Ollama"
         OPENAI_COMPATIBLE = "openai_compatible", "OpenAI-compatible server"
 
@@ -41,6 +42,9 @@ class ProviderProfile(UUIDModel, TimeStamped):
     api_key = EncryptedTextField(blank=True)  # never returned to the browser
     location = models.CharField(max_length=5, choices=Location.choices, default=Location.CLOUD)
     vision = models.BooleanField(default=True, help_text="Can read photos and documents.")
+    # OpenRouter: also use providers that may store or train on prompts (the
+    # free models run only on such). Off: only providers that don't.
+    allow_data_collection = models.BooleanField(default=False)
     enabled = models.BooleanField(default=True)
 
     class Meta:

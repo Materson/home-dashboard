@@ -122,6 +122,176 @@ def test_ollama_defaults_to_the_local_url():
     assert not adapter.official
 
 
+# ---- OpenRouter ----
+
+
+class FakeHTTP:
+    """Stands in for httpx.get: answers per URL suffix."""
+
+    def __init__(self, routes):
+        self.routes, self.calls = routes, []
+
+    def __call__(self, url, headers=None, timeout=None):
+        self.calls.append((url, headers))
+        status, body = next(v for k, v in self.routes.items() if url.endswith(k))
+        return NS(status_code=status, json=lambda: body)
+
+
+MODELS_PAGE = {
+    "data": [
+        {
+            "id": "anthropic/claude-opus-4.5",
+            "name": "Claude Opus 4.5",
+            "architecture": {"input_modalities": ["text", "image", "file"]},
+            "supported_parameters": ["tools", "tool_choice", "max_tokens"],
+            "context_length": 200000,
+            "pricing": {"prompt": "0.000005", "completion": "0.000025"},
+        },
+        {
+            "id": "some/text-only",
+            "architecture": {"input_modalities": ["text"]},
+            "supported_parameters": ["max_tokens"],
+            "pricing": {"prompt": "-1", "completion": "0"},
+        },
+    ],
+    "links": {"next": None},
+}
+
+
+def test_openrouter_sends_privacy_routing_and_pdfs():
+    reply = NS(choices=[NS(message=NS(content="OK", tool_calls=None, refusal=None))], usage=None)
+    rec = Recorder(reply)
+    adapter = OpenAIAdapter(
+        api_key="k",
+        model="anthropic/claude-opus-4.5",
+        kind="openrouter",
+        client=NS(chat=NS(completions=NS(create=rec))),
+    )
+    assert "application/pdf" in adapter.supported_files
+    history = [ChatMessage("user", "Co w wynikach?", [Image("application/pdf", b"%PDF")])]
+    adapter.start("SYS", TOOLS, history).step()
+    call = rec.calls[0]
+    # only providers that don't collect prompts
+    assert call["extra_body"] == {"provider": {"data_collection": "deny"}}
+    assert "max_completion_tokens" not in call
+    part = call["messages"][1]["content"][1]
+    assert part["type"] == "file" and part["file"]["file_data"].startswith(
+        "data:application/pdf;base64,"
+    )
+
+
+def test_openrouter_defaults_to_its_url_and_others_get_no_routing():
+    assert "openrouter.ai/api/v1" in str(
+        OpenAIAdapter(api_key="k", model="m", kind="openrouter").client.base_url
+    )
+    reply = NS(choices=[NS(message=NS(content="OK", tool_calls=None, refusal=None))], usage=None)
+    rec = Recorder(reply)
+    OpenAIAdapter(api_key="k", model="gpt-x", client=NS(chat=NS(completions=NS(create=rec)))).start(
+        "SYS", TOOLS, [ChatMessage("user", "x", [Image("application/pdf", b"%PDF")])]
+    ).step()
+    assert "extra_body" not in rec.calls[0]
+    assert rec.calls[0]["messages"][1]["content"] == "x"  # no PDF part outside OpenRouter
+
+
+def _status(cls, code, message):
+    import httpx  # noqa: PLC0415
+
+    response = httpx.Response(
+        code, request=httpx.Request("POST", "https://openrouter.ai/api/v1/chat")
+    )
+    return cls(message, response=response, body=None)
+
+
+def test_openrouter_errors_read_well():
+    import openai  # noqa: PLC0415
+    import pytest  # noqa: PLC0415
+
+    from apps.assistant.llm import LLMError  # noqa: PLC0415
+
+    cases = [
+        (_status(openai.APIStatusError, 402, "Insufficient credits"), "doładuj"),
+        (
+            _status(openai.NotFoundError, 404, "No endpoints found matching your data policy"),
+            "Dopuść dostawców",
+        ),
+        (
+            _status(openai.APIStatusError, 503, "no provider meets your routing requirements"),
+            "inny model",
+        ),
+        (_status(openai.NotFoundError, 404, "model not found"), "nie istnieje"),
+    ]
+    for exc, expected in cases:
+
+        def boom(*, _exc=exc, **_kw):
+            raise _exc
+
+        adapter = OpenAIAdapter(
+            api_key="k",
+            model="x/y",
+            kind="openrouter",
+            client=NS(chat=NS(completions=NS(create=boom))),
+        )
+        with pytest.raises(LLMError, match=expected):
+            adapter.start("SYS", [], HISTORY).step()
+
+
+def test_openrouter_may_allow_providers_that_store_prompts():
+    import openai  # noqa: PLC0415
+    import pytest  # noqa: PLC0415
+
+    from apps.assistant.llm import LLMError  # noqa: PLC0415
+
+    reply = NS(choices=[NS(message=NS(content="OK", tool_calls=None, refusal=None))], usage=None)
+    rec = Recorder(reply)
+    free = {"api_key": "k", "model": "google/gemma-4-31b-it:free", "kind": "openrouter"}
+    OpenAIAdapter(
+        **free, allow_data_collection=True, client=NS(chat=NS(completions=NS(create=rec)))
+    ).start("SYS", TOOLS, HISTORY).step()
+    assert "extra_body" not in rec.calls[0]  # OpenRouter's default: any provider
+
+    # Allowed here but refused by the account's own privacy settings: say where.
+    def boom(**_kw):
+        raise _status(
+            openai.NotFoundError,
+            404,
+            "No endpoints found matching your data policy (Free model training)",
+        )
+
+    adapter = OpenAIAdapter(
+        **free, allow_data_collection=True, client=NS(chat=NS(completions=NS(create=boom)))
+    )
+    with pytest.raises(LLMError, match="settings/privacy"):
+        adapter.start("SYS", [], HISTORY).step()
+
+
+def test_openrouter_catalogue_and_key_check():
+    import pytest  # noqa: PLC0415
+
+    from apps.assistant.llm import LLMError, openrouter  # noqa: PLC0415
+
+    http = FakeHTTP(
+        {
+            "/models": (200, MODELS_PAGE),
+            "/key": (200, {"data": {"label": "dom", "limit_remaining": 4.5}}),
+        }
+    )
+    models = openrouter.list_models("k", get=http)
+    opus = models[0]
+    assert (opus.vision, opus.tools, opus.price_in, opus.price_out) == (True, True, "5", "25")
+    assert (models[1].tools, models[1].vision, models[1].price_in) == (False, False, None)
+    assert http.calls[0][1] == {"Authorization": "Bearer k"}
+    assert openrouter.check_key("k", get=http)["label"] == "dom"
+
+    for routes, message in (
+        ({"/key": (401, {})}, "klucz"),
+        ({"/key": (200, {"data": {"limit_remaining": 0}})}, "limit"),
+    ):
+        with pytest.raises(LLMError, match=message):
+            openrouter.check_key("k", get=FakeHTTP(routes))
+    with pytest.raises(LLMError, match="Brak klucza"):
+        openrouter.check_key("")
+
+
 # ---- Gemini ----
 
 

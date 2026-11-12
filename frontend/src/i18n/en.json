@@ -886,5 +886,16 @@
   "overview.inDays_one": "In {{count}} day",
   "overview.inDays_other": "In {{count}} days",
   "overview.overdueDays_one": "{{count}} day overdue",
-  "overview.overdueDays_other": "{{count}} days overdue"
+  "overview.overdueDays_other": "{{count}} days overdue",
+  "settings.ai.kind.openrouter": "OpenRouter (many models)",
+  "settings.ai.modelHint.openrouter": "Pick from the list — it only shows models that can use the assistant's tools. Image icon: the model reads photos.",
+  "settings.ai.openrouter.privacy": "Requests only go to providers that don't collect prompt data. If a model has no such provider (free models don't), the assistant shows an error. Data still goes with aliases, as to any cloud model.",
+  "settings.ai.openrouter.price": "${{in}} / ${{out}} per 1M tokens (input / output)",
+  "settings.ai.openrouter.modelsError": "Couldn't load the model list — type the id yourself, e.g. anthropic/claude-opus-4.5.",
+  "settings.ai.f.cloudOnly": "This is an internet service, so it's always “cloud”: it gets data with aliases and never local-only modules.",
+  "settings.ai.f.allowDataCollection": "Allow providers that may store prompts",
+  "settings.ai.f.allowDataCollectionHint": "Needed for free models (:free). Such providers may keep prompts or train their models on them.",
+  "settings.ai.openrouter.mayStore": "Requests may go to providers that keep them or train models on them. They go with aliases in place of names and personal data, and modules set to “local only” (health and notes by default) never go here. Your OpenRouter account (openrouter.ai/settings/privacy) must allow such models too.",
+  "settings.ai.openrouter.freeNeedsSwitch": "This is a free model: without the switch above the chat shows an error.",
+  "settings.ai.mayStore": "may store prompts"
 }

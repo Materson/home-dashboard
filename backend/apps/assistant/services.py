@@ -12,7 +12,7 @@ from django.db.transaction import atomic
 from apps.core import attachments
 
 from . import loop, policy
-from .llm import Image, LLMError, build_adapter
+from .llm import Image, LLMError, build_adapter, openrouter
 from .models import AISettings, Conversation, Message, ProviderProfile
 from .selectors import get_conversation, require_use
 
@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from django.core.files.uploadedfile import UploadedFile
 
     from apps.access.context import AccessContext
+
+    from .llm.openrouter import Model
 
 MAX_FILES = 4
 MAX_TEXT = 4000
@@ -81,6 +83,10 @@ def send_message(
 # -------------------- Settings (admin) --------------------
 
 
+# Services on the internet (never on the home network), each needing a key.
+HOSTED = ("anthropic", "openai", "google", "openrouter")
+
+
 def _require_manage(ctx: AccessContext) -> None:
     if not policy.can_manage(ctx):
         raise PermissionDenied("only an admin manages AI settings")
@@ -126,10 +132,26 @@ def save_profile(
         profile.api_key = api_key
     if profile.kind == "openai_compatible" and not profile.base_url:
         raise ValueError("an OpenAI-compatible server needs its URL")
-    if profile.kind in ("anthropic", "openai", "google") and not profile.api_key:
+    if profile.kind in HOSTED and not profile.api_key:
         raise ValueError("this provider needs an API key")
+    if profile.kind in HOSTED:
+        # Always "cloud": a hosted service marked local would get local-only
+        # data (health, notes) without aliases.
+        profile.location = ProviderProfile.Location.CLOUD
+    if profile.kind == "openrouter":
+        profile.base_url = ""  # always openrouter.ai
+    else:
+        profile.allow_data_collection = False  # an OpenRouter routing choice only
     profile.save()
     return profile
+
+
+def openrouter_models(ctx: AccessContext, profile_id: UUID | None = None) -> list[Model]:
+    """OpenRouter's models that can use tools (for picking one in the form),
+    asked with that profile's key when there is one."""
+    _require_manage(ctx)
+    profile = ProviderProfile.objects.filter(pk=profile_id).first() if profile_id else None
+    return openrouter.tool_models(profile.api_key if profile else "")
 
 
 def delete_profile(ctx: AccessContext, profile_id: UUID) -> None:

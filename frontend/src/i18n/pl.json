@@ -908,5 +908,16 @@
   "overview.overdueDays_one": "{{count}} dzień po terminie",
   "overview.overdueDays_few": "{{count}} dni po terminie",
   "overview.overdueDays_many": "{{count}} dni po terminie",
-  "overview.overdueDays_other": "{{count}} dnia po terminie"
+  "overview.overdueDays_other": "{{count}} dnia po terminie",
+  "settings.ai.kind.openrouter": "OpenRouter (wiele modeli)",
+  "settings.ai.modelHint.openrouter": "Wybierz z listy — są na niej tylko modele, które umieją korzystać z narzędzi asystenta. Ikona obrazka: model czyta zdjęcia.",
+  "settings.ai.openrouter.privacy": "Zapytania trafią tylko do dostawców, którzy nie zbierają danych z zapytań. Jeśli model nie ma takiego dostawcy (tak jest z darmowymi modelami), asystent pokaże błąd. Dane i tak idą z aliasami, jak do każdego modelu w chmurze.",
+  "settings.ai.openrouter.price": "{{in}} $ / {{out}} $ za 1 mln tokenów (pytanie / odpowiedź)",
+  "settings.ai.openrouter.modelsError": "Nie udało się pobrać listy modeli — wpisz identyfikator ręcznie, np. anthropic/claude-opus-4.5.",
+  "settings.ai.f.cloudOnly": "To usługa w internecie, więc zawsze działa jako „chmura” — dostaje dane z aliasami i nie obsługuje modułów „tylko lokalnie”.",
+  "settings.ai.f.allowDataCollection": "Dopuść dostawców, którzy mogą zapisywać zapytania",
+  "settings.ai.f.allowDataCollectionHint": "Potrzebne dla darmowych modeli (:free). Tacy dostawcy mogą przechowywać zapytania albo uczyć na nich swoje modele.",
+  "settings.ai.openrouter.mayStore": "Zapytania mogą trafić do dostawców, którzy je przechowują albo uczą na nich modele. Idą z aliasami w miejscu imion i danych osobowych, a moduły ustawione na „tylko lokalnie” (domyślnie zdrowie i notatki) nigdy tu nie trafiają. Na koncie OpenRouter (openrouter.ai/settings/privacy) też musisz dopuścić takie modele.",
+  "settings.ai.openrouter.freeNeedsSwitch": "To darmowy model: bez przełącznika powyżej czat pokaże błąd.",
+  "settings.ai.mayStore": "może zapisywać zapytania"
 }

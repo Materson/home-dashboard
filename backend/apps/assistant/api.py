@@ -215,12 +215,13 @@ def decide(
 
 class ProfileIn(Schema):
     name: str
-    kind: Literal["anthropic", "openai", "google", "ollama", "openai_compatible"]
+    kind: Literal["anthropic", "openai", "google", "openrouter", "ollama", "openai_compatible"]
     model: str
     base_url: str = ""
     api_key: str = ""  # empty on update = keep the stored one
     location: Literal["cloud", "local"] = "cloud"
     vision: bool = True
+    allow_data_collection: bool = False  # OpenRouter: providers that may store prompts
     enabled: bool = True
 
 
@@ -232,6 +233,7 @@ class ProfileOut(Schema):
     base_url: str
     location: str
     vision: bool
+    allow_data_collection: bool
     enabled: bool
     has_key: bool
 
@@ -298,6 +300,25 @@ def update_profile(request: HttpRequest, profile_id: UUID, payload: ProfileIn):
 def delete_profile(request: HttpRequest, profile_id: UUID) -> dict[str, bool]:
     services.delete_profile(get_ctx(request), profile_id)
     return {"deleted": True}
+
+
+class OpenRouterModelOut(Schema):
+    id: str
+    name: str
+    vision: bool
+    context: int | None
+    price_in: str | None  # USD per 1M tokens
+    price_out: str | None
+
+
+@router.get("/openrouter/models", response={200: list[OpenRouterModelOut], 422: dict})
+def openrouter_models(request: HttpRequest, profile_id: UUID | None = None):
+    """OpenRouter's models that can use tools, to pick one in the profile form."""
+    try:
+        models = services.openrouter_models(get_ctx(request), profile_id)
+    except LLMError as exc:
+        return 422, {"detail": exc.user_text}
+    return [m.as_dict() for m in models]
 
 
 class TestOut(Schema):

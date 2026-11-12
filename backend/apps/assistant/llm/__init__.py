@@ -37,7 +37,7 @@ def build_adapter(profile: ProviderProfile) -> Adapter:
         from .google_adapter import GoogleAdapter  # noqa: PLC0415
 
         return GoogleAdapter(api_key=profile.api_key, model=profile.model)
-    if profile.kind in ("openai", "ollama", "openai_compatible"):
+    if profile.kind in ("openai", "openrouter", "ollama", "openai_compatible"):
         from .openai_adapter import OpenAIAdapter  # noqa: PLC0415
 
         return OpenAIAdapter(
@@ -45,5 +45,6 @@ def build_adapter(profile: ProviderProfile) -> Adapter:
             model=profile.model,
             base_url=profile.base_url,
             kind=profile.kind,
+            allow_data_collection=profile.allow_data_collection,
         )
     raise LLMError(f"Nieznany dostawca: {profile.kind}")

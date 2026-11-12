@@ -1,6 +1,8 @@
-"""OpenAI (ChatGPT), Ollama and any OpenAI-compatible server (LM Studio,
-vLLM…) through OpenAI's official Python SDK — the Chat Completions API,
-which all of them speak, including function calling."""
+"""OpenAI (ChatGPT), OpenRouter, Ollama and any OpenAI-compatible server
+(LM Studio, vLLM…) through OpenAI's official Python SDK — the Chat
+Completions API, which all of them speak, including function calling.
+OpenRouter requests only go to providers that don't collect prompts and may
+carry PDFs (see ``openrouter``)."""
 
 from __future__ import annotations
 
@@ -10,23 +12,72 @@ from typing import Any
 
 import openai
 
+from . import openrouter
 from .base import ChatMessage, LLMError, Session, ToolCall, ToolResult, ToolSpec, Turn
 
 TIMEOUT_S = 180.0
 OLLAMA_DEFAULT_URL = "http://localhost:11434/v1"
 
 
-def _content(msg: ChatMessage) -> list[dict[str, Any]] | str:
+PDF = "application/pdf"
+IMAGES = frozenset({"image/jpeg", "image/png", "image/webp"})
+
+
+def _b64(data: bytes) -> str:
+    return base64.standard_b64encode(data).decode()
+
+
+def _content(msg: ChatMessage, *, pdf: bool = False) -> list[dict[str, Any]] | str:
     images = [i for i in msg.images if i.mime.startswith("image/")]
-    if not images:
+    pdfs = [i for i in msg.images if pdf and i.mime == PDF]
+    if not images and not pdfs:
         return msg.text
     parts: list[dict[str, Any]] = [
-        {"type": "text", "text": msg.text or "Przeczytaj załączony obraz."}
+        {"type": "text", "text": msg.text or "Przeczytaj załączony plik."}
     ]
     for img in images:
-        url = f"data:{img.mime};base64,{base64.standard_b64encode(img.data).decode()}"
+        url = f"data:{img.mime};base64,{_b64(img.data)}"
         parts.append({"type": "image_url", "image_url": {"url": url}})
+    for n, doc in enumerate(pdfs, 1):
+        parts.append(
+            {
+                "type": "file",
+                "file": {
+                    "filename": f"plik-{n}.pdf",
+                    "file_data": f"data:{PDF};base64,{_b64(doc.data)}",
+                },
+            }
+        )
     return parts
+
+
+def _privacy_block(exc: openai.APIStatusError) -> bool:
+    """OpenRouter found no provider for this model that keeps to the
+    no-data-collection rule."""
+    text = str(exc.message).lower()
+    return any(w in text for w in ("data policy", "data_collection", "routing requirements"))
+
+
+def _status_error(adapter: OpenAIAdapter, exc: openai.APIStatusError) -> LLMError:
+    if exc.status_code == 402:  # noqa: PLR2004 — Payment Required
+        return LLMError("Brak środków na koncie u dostawcy AI — doładuj kredyty.")
+    if adapter.openrouter and _privacy_block(exc):
+        if adapter.private_routing:
+            return LLMError(
+                "Żaden dostawca tego modelu nie gwarantuje, że nie zbiera danych z zapytań "
+                "(tak jest z darmowymi modelami). Wybierz inny model albo włącz w profilu "
+                "„Dopuść dostawców, którzy mogą zapisywać zapytania”."
+            )
+        # Our routing allows them, so the account's own privacy settings refuse.
+        return LLMError(
+            "Ustawienia prywatności konta OpenRouter nie dopuszczają tego modelu — zmień je na "
+            f"openrouter.ai/settings/privacy albo wybierz inny model. ({exc.message})"
+        )
+    if isinstance(exc, openai.NotFoundError):
+        return LLMError(f"Model {adapter.model!r} nie istnieje na tym serwerze.")
+    if isinstance(exc, openai.BadRequestError):
+        return LLMError(f"Serwer odrzucił zapytanie: {exc.message}")
+    return LLMError(f"Błąd serwera AI ({exc.status_code}).")
 
 
 class OpenAISession:
@@ -44,7 +95,9 @@ class OpenAISession:
             for t in tools
         ]
         self.messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
-        self.messages += [{"role": m.role, "content": _content(m)} for m in history]
+        self.messages += [
+            {"role": m.role, "content": _content(m, pdf=adapter.openrouter)} for m in history
+        ]
 
     def step(self) -> Turn:
         kwargs: dict[str, Any] = {"model": self.a.model, "messages": self.messages}
@@ -52,18 +105,16 @@ class OpenAISession:
             kwargs["tools"] = self.tools
         if self.a.official:
             kwargs["max_completion_tokens"] = 8000
+        if self.a.private_routing:
+            kwargs["extra_body"] = openrouter.PRIVACY
         try:
             response = self.a.client.chat.completions.create(**kwargs)
         except openai.AuthenticationError as exc:
             raise LLMError("Nieprawidłowy klucz API.") from exc
-        except openai.NotFoundError as exc:
-            raise LLMError(f"Model {self.a.model!r} nie istnieje na tym serwerze.") from exc
         except openai.RateLimitError as exc:
             raise LLMError("Limit zapytań — spróbuj za chwilę.") from exc
-        except openai.BadRequestError as exc:
-            raise LLMError(f"Serwer odrzucił zapytanie: {exc.message}") from exc
         except openai.APIStatusError as exc:
-            raise LLMError(f"Błąd serwera AI ({exc.status_code}).") from exc
+            raise _status_error(self.a, exc) from exc
         except openai.APIConnectionError as exc:
             raise LLMError("Brak połączenia z serwerem AI.") from exc
 
@@ -115,23 +166,40 @@ class OpenAIAdapter:
         model: str,
         base_url: str = "",
         kind: str = "openai",
+        allow_data_collection: bool = False,
         client: Any = None,
     ):
         self.model = model
         self.official = kind == "openai"
+        self.openrouter = kind == "openrouter"
+        # OpenRouter: only providers that don't collect prompts, unless the
+        # profile allows the others too (free models run only on those).
+        self.private_routing = self.openrouter and not allow_data_collection
+        self.api_key = api_key
         if kind == "ollama":
             base_url = base_url or OLLAMA_DEFAULT_URL
+        if self.openrouter:
+            base_url = base_url or openrouter.URL
         self.client = client or openai.OpenAI(
             api_key=api_key or "not-needed",  # Ollama / local servers ignore it
             base_url=base_url or None,
             timeout=TIMEOUT_S,
         )
-        self.supported_files = frozenset({"image/jpeg", "image/png", "image/webp"})
+        self.supported_files = IMAGES | {PDF} if self.openrouter else IMAGES
 
     def start(self, system: str, tools: list[ToolSpec], history: list[ChatMessage]) -> Session:
         return OpenAISession(self, system, tools, history)
 
     def ping(self) -> str:
+        if self.openrouter:
+            # Its model list may be public, so check the key itself first.
+            base = str(self.client.base_url).rstrip("/")
+            info = openrouter.check_key(self.api_key, base_url=base)
+            ids = {m.id for m in openrouter.list_models(self.api_key, base_url=base)}
+            if self.model not in ids:
+                raise LLMError(f"OpenRouter nie ma modelu {self.model!r}.")
+            label = info.get("label")
+            return f"{self.model} (klucz: {label})" if label else self.model
         try:
             ids = {m.id for m in self.client.models.list()}
         except openai.AuthenticationError as exc:

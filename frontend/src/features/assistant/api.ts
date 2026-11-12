@@ -2,7 +2,17 @@
  *  changes, "what was sent", and the admin AI settings. */
 
 export type Location = "cloud" | "local";
-export type ProviderKind = "anthropic" | "openai" | "google" | "ollama" | "openai_compatible";
+export type ProviderKind = "anthropic" | "openai" | "google" | "openrouter" | "ollama" | "openai_compatible";
+
+/** An OpenRouter model the assistant can use (it supports tools). Prices: USD per 1M tokens. */
+export type OpenRouterModel = {
+  id: string;
+  name: string;
+  vision: boolean;
+  context: number | null;
+  price_in: string | null;
+  price_out: string | null;
+};
 export type Policy = "off" | "local" | "cloud";
 
 export type ProfileBrief = { name: string; kind: ProviderKind; model: string; location: Location };
@@ -64,6 +74,8 @@ export type Profile = {
   base_url: string;
   location: Location;
   vision: boolean;
+  /** OpenRouter: also providers that may store / train on prompts (free models need it). */
+  allow_data_collection: boolean;
   enabled: boolean;
   has_key: boolean;
 };
@@ -128,6 +140,8 @@ export const assistantApi = {
   saveProfile: (payload: ProfilePayload, id?: string) =>
     id ? call<Profile>(`/profiles/${id}`, json("PUT", payload)) : call<Profile>("/profiles", json("POST", payload)),
   deleteProfile: (id: string) => call<{ deleted: boolean }>(`/profiles/${id}`, { method: "DELETE" }),
+  openrouterModels: (profileId?: string) =>
+    call<OpenRouterModel[]>(`/openrouter/models${profileId ? `?profile_id=${profileId}` : ""}`),
   testProfile: (id: string) => call<{ ok: boolean; detail: string }>(`/profiles/${id}/test`, { method: "POST" }),
 };
 
