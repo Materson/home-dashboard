@@ -4,14 +4,29 @@
  * aliases).
  */
 import { Badge, Button, Group, Paper, Stack, Table, Text } from "@mantine/core";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { fmtDate, fmtDateTime, fmtMoney, fmtQty } from "@/lib/format";
 
 import { type Action, type ActionStatus, assistantApi } from "./api";
 
-type Fmt = "money" | "date" | "datetime" | "bool" | "km" | "litres" | "kind" | "repeat" | "list" | "text";
+type Fmt =
+  | "money"
+  | "date"
+  | "datetime"
+  | "bool"
+  | "km"
+  | "litres"
+  | "kind"
+  | "repeat"
+  | "list"
+  | "text"
+  | "conditionKind"
+  | "symptoms"
+  | "files"
+  | "kg"
+  | "cm";
 const FIELDS: Record<string, [string, Fmt][]> = {
   "finance.transaction": [
     ["kind", "kind"],
@@ -37,6 +52,56 @@ const FIELDS: Record<string, [string, Fmt][]> = {
     ["date", "date"],
     ["odometer_km", "km"],
   ],
+  "health.symptom": [
+    ["person", "text"],
+    ["event", "text"],
+    ["symptom", "text"],
+    ["reading", "text"],
+    ["when", "datetime"],
+    ["notes", "text"],
+  ],
+  "health.event": [
+    ["person", "text"],
+    ["title", "text"],
+    ["condition_kind", "conditionKind"],
+    ["start_date", "date"],
+    ["symptoms", "symptoms"],
+    ["notes", "text"],
+  ],
+  "health.measurement": [
+    ["person", "text"],
+    ["date", "date"],
+    ["weight_kg", "kg"],
+    ["height_cm", "cm"],
+  ],
+  "health.visit": [
+    ["person", "text"],
+    ["starts_at", "datetime"],
+    ["specialty", "text"],
+    ["doctor", "text"],
+    ["place", "text"],
+    ["room", "text"],
+    ["purpose", "text"],
+    ["event", "text"],
+    ["cost", "money"],
+  ],
+  "health.treatment": [
+    ["person", "text"],
+    ["medicine", "text"],
+    ["dosage", "text"],
+    ["dose_times", "list"],
+    ["start_date", "date"],
+    ["end_date", "date"],
+    ["reminders", "bool"],
+    ["event", "text"],
+  ],
+  "health.result": [
+    ["person", "text"],
+    ["title", "text"],
+    ["date", "date"],
+    ["lab", "text"],
+    ["files", "files"],
+  ],
   "notes.note": [
     ["title", "text"],
     ["body", "text"],
@@ -45,6 +110,8 @@ const FIELDS: Record<string, [string, Fmt][]> = {
     ["repeat", "repeat"],
   ],
 };
+
+export const CHANGED_KEYS = [["finance"], ["cars"], ["household"], ["notes"], ["reminders"], ["health"], ["cabinet"]];
 
 const STATUS_COLOR: Record<ActionStatus, string> = {
   proposed: "blue",
@@ -56,11 +123,17 @@ const STATUS_COLOR: Record<ActionStatus, string> = {
 
 export function ActionCard({ action, onChanged }: { action: Action; onChanged: () => void }) {
   const { t } = useTranslation();
+  const qc = useQueryClient();
   const decide = useMutation({
     mutationFn: (d: "confirm" | "cancel" | "undo") => assistantApi.decide(action.id, d),
-    onSuccess: onChanged,
+    onSuccess: () => {
+      onChanged();
+      // The change landed in (or left) another module's data.
+      for (const key of CHANGED_KEYS) qc.invalidateQueries({ queryKey: key });
+    },
   });
-  const p = action.payload;
+  // The event's kind is stored as "kind" — shown under its own label.
+  const p = action.kind === "health.event" ? { ...action.payload, condition_kind: action.payload.kind } : action.payload;
 
   const value = (key: string, fmt: Fmt): string | null => {
     const v = p[key];
@@ -84,6 +157,18 @@ export function ActionCard({ action, onChanged }: { action: Action; onChanged: (
         return t(`notes.repeat.${String(v) || "none"}`);
       case "list":
         return (v as string[]).join(", ");
+      case "conditionKind":
+        return t(`health.conditionKind.${String(v)}`);
+      case "symptoms":
+        return (v as { symptom: string; reading?: string }[])
+          .map((s) => (s.reading ? `${s.symptom} ${s.reading}` : s.symptom))
+          .join(", ");
+      case "files":
+        return (v as { name: string }[]).map((f) => f.name).join(", ");
+      case "kg":
+        return `${fmtQty(String(v))} kg`;
+      case "cm":
+        return `${fmtQty(String(v))} cm`;
       default:
         return String(v);
     }

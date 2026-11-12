@@ -15,8 +15,9 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.db.transaction import atomic
+from django.http import Http404
 
 from .models import Conversation, PendingAction
 
@@ -147,12 +148,159 @@ def _note_undo(ctx: AccessContext, result: list[dict[str, str]]) -> None:
         services.delete_note(ctx, UUID(r["id"]))
 
 
+# ---- health (always confirmed; the health services do the rest) ----
+
+
+def _uuid(value: str | None) -> UUID | None:
+    return UUID(value) if value else None
+
+
+def _local(value: str) -> datetime:
+    return datetime.fromisoformat(value)  # naive local; save_record makes it aware
+
+
+def _health_save(ctx: AccessContext, kind: str, data: dict[str, Any]) -> dict[str, str]:
+    from apps.health import services  # noqa: PLC0415
+
+    record = services.save_record(ctx, kind, data)
+    return {"type": f"health.{kind}", "id": str(record.id)}
+
+
+def _symptom_data(p: dict[str, Any], row: dict[str, Any], condition_id: UUID) -> dict[str, Any]:
+    return {
+        "person_id": UUID(p["person_id"]),
+        "condition_id": condition_id,
+        "observed_at": _local(row["when"]),
+        "symptom": row["symptom"],
+        "value": row.get("reading", ""),
+        "notes": row.get("notes", ""),
+    }
+
+
+def _hs_symptom(ctx: AccessContext, p: dict[str, Any]) -> list[dict[str, str]]:
+    return [_health_save(ctx, "symptoms", _symptom_data(p, p, UUID(p["condition_id"])))]
+
+
+def _hs_event(ctx: AccessContext, p: dict[str, Any]) -> list[dict[str, str]]:
+    event = _health_save(
+        ctx,
+        "conditions",
+        {
+            "person_id": UUID(p["person_id"]),
+            "kind": p["kind"],
+            "title": p["title"],
+            "start_date": date.fromisoformat(p["start_date"]),
+            "notes": p.get("notes", ""),
+        },
+    )
+    # Symptoms go with the event (deleting the event removes them too).
+    for row in p.get("symptoms", []):
+        _health_save(ctx, "symptoms", _symptom_data(p, row, UUID(event["id"])))
+    return [event]
+
+
+def _hs_measurement(ctx: AccessContext, p: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        _health_save(
+            ctx,
+            "measurements",
+            {
+                "person_id": UUID(p["person_id"]),
+                "date": date.fromisoformat(p["date"]),
+                "weight_kg": Decimal(p["weight_kg"]) if p.get("weight_kg") else None,
+                "height_cm": Decimal(p["height_cm"]) if p.get("height_cm") else None,
+            },
+        )
+    ]
+
+
+def _hs_visit(ctx: AccessContext, p: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        _health_save(
+            ctx,
+            "appointments",
+            {
+                "person_id": UUID(p["person_id"]),
+                "starts_at": _local(p["starts_at"]),
+                **{
+                    k: p.get(k, "")
+                    for k in ("doctor", "specialty", "place", "room", "purpose", "notes")
+                },
+                "status": "planned",
+                "cost": Decimal(p["cost"]) if p.get("cost") else None,
+                "currency": p.get("currency", "PLN"),
+                "condition_id": _uuid(p.get("condition_id")),
+            },
+        )
+    ]
+
+
+def _hs_treatment(ctx: AccessContext, p: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        _health_save(
+            ctx,
+            "medications",
+            {
+                "person_id": UUID(p["person_id"]),
+                "name": p["medicine"],
+                "dosage": p.get("dosage", ""),
+                "dose_times": p.get("dose_times", []),
+                "reminders_enabled": bool(p.get("reminders")),
+                "start_date": date.fromisoformat(p["start_date"]),
+                "end_date": date.fromisoformat(p["end_date"]) if p.get("end_date") else None,
+                "condition_id": _uuid(p.get("condition_id")),
+                "notes": p.get("notes", ""),
+            },
+        )
+    ]
+
+
+def _hs_result(ctx: AccessContext, p: dict[str, Any]) -> list[dict[str, str]]:
+    from django.core.files.base import ContentFile  # noqa: PLC0415
+
+    from apps.core import attachments  # noqa: PLC0415
+    from apps.core.models import Attachment  # noqa: PLC0415
+    from apps.health.models import TestResult  # noqa: PLC0415
+
+    saved = _health_save(
+        ctx,
+        "results",
+        {
+            "person_id": UUID(p["person_id"]),
+            "date": date.fromisoformat(p["date"]),
+            "title": p["title"],
+            "lab": p.get("lab", ""),
+            "notes": p.get("notes", ""),
+        },
+    )
+    result = TestResult.objects.get(pk=saved["id"])
+    # A copy of each chat file, now governed by the result's health rules.
+    for f in p.get("files", []):
+        source = Attachment.objects.get(pk=f["id"])
+        with source.file.open("rb") as fh:
+            attachments.upload(ctx, result, ContentFile(fh.read(), name=source.original_name))
+    return [saved]
+
+
+def _health_undo(ctx: AccessContext, result: list[dict[str, str]]) -> None:
+    from apps.health import services  # noqa: PLC0415
+
+    for r in result:
+        services.delete_record(ctx, r["type"].split(".", 1)[1], UUID(r["id"]))
+
+
 KINDS: dict[str, Kind] = {
     "finance.transaction": Kind(_tx_execute, _tx_undo),
     "cars.fuel": Kind(_car_execute("fuel"), _car_undo("fuel")),
     "cars.odometer": Kind(_car_execute("odometer"), _car_undo("odometer")),
     "household.shopping": Kind(_shop_execute, _shop_undo),
     "notes.note": Kind(_note_execute, _note_undo),
+    "health.symptom": Kind(_hs_symptom, _health_undo),
+    "health.event": Kind(_hs_event, _health_undo),
+    "health.measurement": Kind(_hs_measurement, _health_undo),
+    "health.visit": Kind(_hs_visit, _health_undo),
+    "health.treatment": Kind(_hs_treatment, _health_undo),
+    "health.result": Kind(_hs_result, _health_undo),
 }
 
 
@@ -185,7 +333,7 @@ def _run(ctx: AccessContext, action: PendingAction) -> None:
         with atomic():
             action.result = KINDS[action.kind].execute(ctx, action.payload)
             action.status = PendingAction.Status.DONE
-    except (PermissionDenied, ValueError, KeyError) as exc:
+    except (PermissionDenied, ObjectDoesNotExist, Http404, ValueError, KeyError) as exc:
         action.status = PendingAction.Status.FAILED
         action.error = str(exc) or exc.__class__.__name__
     action.save(update_fields=["result", "status", "error", "updated_at"])

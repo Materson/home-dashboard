@@ -30,7 +30,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 
-import { ActionCard } from "./ActionCard";
+import { ActionCard, CHANGED_KEYS } from "./ActionCard";
 import { type Conversation, type Message, ASSISTANT_KEY, assistantApi } from "./api";
 import { CallsModal } from "./CallsModal";
 
@@ -86,7 +86,7 @@ export function ChatPanel(props: {
       qc.invalidateQueries({ queryKey: [...ASSISTANT_KEY, "conversations"] });
       // Confirmed/auto changes touch other pages' data.
       if (result.answer.actions.length) {
-        for (const key of [["finance"], ["cars"], ["household"], ["notes"], ["reminders"]]) {
+        for (const key of CHANGED_KEYS) {
           qc.invalidateQueries({ queryKey: key });
         }
       }

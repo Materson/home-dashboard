@@ -43,7 +43,8 @@ Rules:
 - People may appear as aliases like [P1]. Use them exactly as written (they are turned back into names for the user); never guess real names, addresses or identifiers.
 - Each user message starts with today's date and the page the user is on, in square brackets; "this car", "her", "here" usually refer to that page.
 - Changes: use the propose_* tools for money, cars and anything not the user's own; the user confirms a card — say it is waiting for confirmation, never that it is saved. add_note and add_to_shopping_list save at once (the user can undo).
-- If the user attaches a receipt, odometer photo or invoice, read it and propose the matching entry; ask for missing required values instead of guessing (e.g. the odometer for a fuel entry).
+- If the user attaches a receipt, odometer photo or invoice, read it and propose the matching entry; ask for missing required values instead of guessing (e.g. the odometer for a fuel entry). A lab result photo/PDF → propose_lab_result (the file is attached to it automatically).
+- Health changes are always proposals. A symptom belongs to an ongoing illness/event (propose_symptom); if there is none, propose_health_event with the symptoms in it. Ask who it is about when unclear.
 - Health: give information from the family's own records and the medicine cabinet (doses from the dosing rule); remind briefly to follow the leaflet or a doctor when giving doses. Not a diagnosis.
 - If a topic isn't covered by your tools, it may be switched off for this model in the privacy settings (Ustawienia → AI) or need a private conversation with the local model — say that.
 - Amounts are in PLN unless stated. Dates as DD.MM.YYYY in answers."""
@@ -117,7 +118,7 @@ def run_turn(  # noqa: PLR0915 — one readable pass through the turn
     )
     specs = [ToolSpec(t.name, t.description, t.parameters) for t in tools.values()]
 
-    run = ToolRun(ctx=ctx, conversation=conversation)
+    run = ToolRun(ctx=ctx, conversation=conversation, message=user_message)
     adapter = build_adapter(profile)
     session = adapter.start(SYSTEM, specs, [*history, current])
     sent: list[dict[str, Any]] = [{"role": m.role, "text": m.text} for m in [*history, current]]

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from apps.access.context import AccessContext
-    from apps.assistant.models import Conversation, PendingAction
+    from apps.assistant.models import Conversation, Message, PendingAction
 
 
 class ToolError(ValueError):
@@ -31,6 +31,8 @@ class ToolError(ValueError):
 class ToolRun:
     ctx: AccessContext
     conversation: Conversation
+    # The question being answered (its photos / PDFs can be attached to a record).
+    message: Message | None = None
     actions: list[PendingAction] = field(default_factory=list)
 
 
@@ -128,4 +130,4 @@ def money(value: Decimal | None) -> str | None:
 
 
 # Importing registers the tools.
-from . import cars, finance, health, household, notes, people  # noqa: E402, F401
+from . import cars, finance, health, health_writes, household, notes, people  # noqa: E402, F401
