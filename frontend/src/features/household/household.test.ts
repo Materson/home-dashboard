@@ -29,6 +29,7 @@ describe("fmtQty", () => {
     expect(fmtQty("10.00")).toBe("10");
     expect(fmtQty("2.00")).toBe("2");
     expect(fmtQty("1.50")).toMatch(/^1[.,]5$/);
+    expect(fmtQty("0.00393008")).toMatch(/^0[.,]00393008$/); // a crypto fraction isn't "0"
     expect(fmtQty(null)).toBe("—");
   });
 });
