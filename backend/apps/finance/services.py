@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from django.contrib.contenttypes.models import ContentType
@@ -184,6 +184,15 @@ def settle_debt(ctx: AccessContext, *, name: str, currency: str, on: date) -> De
         date=on,
         notes="Rozliczenie",  # household language is Polish (see seed_finance_categories)
     )
+
+
+def create_transaction(ctx: AccessContext, data: dict[str, Any]) -> Transaction:
+    """A hand-entered transaction (the page form, or a confirmed assistant
+    proposal). ``related_kind``/``related_id`` are validated."""
+    ctx.require("finance", "edit")
+    data = {"related_kind": "", "related_id": None, **data}
+    check_related(data["related_kind"], data["related_id"])
+    return Transaction.objects.create(**data)
 
 
 def check_related(kind: str, related_id: UUID | None) -> None:

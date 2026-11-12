@@ -229,14 +229,10 @@ def list_transactions(request: HttpRequest, filters: Query[TransactionSearch]) -
 
 @router.post("/transactions", response={200: TransactionOut, 422: dict})
 def create_transaction(request: HttpRequest, payload: TransactionIn):
-    ctx = get_ctx(request)
-    ctx.require("finance", "edit")
-    data = payload.dict()
     try:
-        services.check_related(data["related_kind"], data["related_id"])
+        return services.create_transaction(get_ctx(request), payload.dict())
     except ValueError as exc:
         return 422, {"detail": str(exc)}
-    return Transaction.objects.create(**data)
 
 
 @router.put("/transactions/{tx_id}", response={200: TransactionOut, 422: dict})

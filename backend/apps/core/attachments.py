@@ -68,6 +68,12 @@ def list_for(ctx: AccessContext, subject: models.Model) -> models.QuerySet[Attac
 @atomic
 def upload(ctx: AccessContext, subject: models.Model, file: UploadedFile) -> Attachment:
     ctx.require(module_for_model(type(subject)), "edit", subject)
+    return store(subject, file, uploaded_by_id=ctx.user_id)
+
+
+def store(subject: models.Model, file: UploadedFile, *, uploaded_by_id: int) -> Attachment:
+    """Validate and save a file for ``subject``. The caller has checked the
+    permission (``upload`` does; the assistant checks the conversation)."""
     suffix = PurePath(file.name or "").suffix.lower()
     mime = ALLOWED.get(suffix)
     if mime is None:
@@ -83,7 +89,7 @@ def upload(ctx: AccessContext, subject: models.Model, file: UploadedFile) -> Att
     # disk/backups, and nothing non-ASCII in nginx's X-Accel-Redirect header.
     file.name = f"{uuid7().hex}{suffix}"
     return Attachment.objects.create(
-        uploaded_by_id=ctx.user_id,
+        uploaded_by_id=uploaded_by_id,
         content_type=ContentType.objects.get_for_model(type(subject)),
         object_id=subject.pk,
         file=file,
