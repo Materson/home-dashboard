@@ -25,9 +25,18 @@ export function AssistantButton() {
 
   return (
     <>
-      <Affix position={{ bottom: 20, right: 20 }}>
+      {/* above the phone's bottom bar (its height is 0 when hidden) */}
+      <Affix position={{ bottom: "calc(var(--app-shell-footer-offset, 0rem) + 20px)", right: 20 }}>
         <Tooltip label={t("assistant.title")} position="left">
-          <ActionIcon size={52} radius="xl" variant="filled" onClick={() => setOpened(true)} aria-label={t("assistant.title")}>
+          <ActionIcon
+            size={52}
+            radius="xl"
+            variant="gradient"
+            gradient={{ from: "indigo.5", to: "violet.5", deg: 135 }}
+            style={{ boxShadow: "var(--mantine-shadow-lg)" }}
+            onClick={() => setOpened(true)}
+            aria-label={t("assistant.title")}
+          >
             <IconMessageChatbot size={28} />
           </ActionIcon>
         </Tooltip>

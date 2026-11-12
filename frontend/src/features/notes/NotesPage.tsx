@@ -20,7 +20,6 @@ import {
   Switch,
   Text,
   TextInput,
-  Title,
   Tooltip,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
@@ -41,6 +40,8 @@ import {
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
+
 import { useSearchParams } from "react-router-dom";
 
 import { usePermissions } from "@/features/auth/usePermissions";
@@ -108,7 +109,7 @@ export function NotesPage() {
 
   return (
     <Stack gap="lg">
-      <Title order={2}>{t("notes.title")}</Title>
+      <PageHeader title={t("notes.title")} subtitle={t("page.notes.subtitle")} />
       {canEdit && <QuickAdd onAdded={refresh} onMore={(d) => setDraft(d)} />}
 
       <Group justify="space-between">

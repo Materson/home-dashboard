@@ -3,10 +3,12 @@
  * health access — their health at a glance (BMI, trend, treatments, visits).
  */
 import { useState } from "react";
-import { Alert, Anchor, Avatar, Button, Group, Stack, Text, Title } from "@mantine/core";
+import { ActionIcon, Alert, Avatar, Button, Stack, Tooltip } from "@mantine/core";
 import { IconArrowLeft, IconHeartbeat, IconPencil } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
+
 import { Link, useParams } from "react-router-dom";
 
 import type { Row } from "@/components/records/fields";
@@ -33,27 +35,27 @@ export function PersonPage() {
 
   return (
     <Stack gap="lg">
-      <Anchor component={Link} to="/people" c="dimmed">
-        <Group gap={4}>
-          <IconArrowLeft size={16} />
-          {t("people.title")}
-        </Group>
-      </Anchor>
-      <Group justify="space-between">
-        <Group>
-          <Avatar color={person.color} variant="filled" radius="xl" size="xl">
+      <PageHeader
+        title={person.display_name}
+        subtitle={
+          person.birth_date
+            ? `${fmtDate(person.birth_date)} · ${ageText(ageInMonths(person.birth_date), t)}`
+            : t("people.noBirthDate")
+        }
+        before={
+          <Tooltip label={t("people.title")}>
+            <ActionIcon component={Link} to="/people" variant="default" size="lg" radius="md" aria-label={t("people.title")}>
+              <IconArrowLeft size={18} />
+            </ActionIcon>
+          </Tooltip>
+        }
+        icon={
+          <Avatar color={person.color} variant="filled" radius="md" size={42}>
             {person.display_name.slice(0, 2).toUpperCase()}
           </Avatar>
-          <Stack gap={2}>
-            <Title order={2}>{person.display_name}</Title>
-            <Text c="dimmed">
-              {person.birth_date
-                ? `${fmtDate(person.birth_date)} · ${ageText(ageInMonths(person.birth_date), t)}`
-                : t("people.noBirthDate")}
-            </Text>
-          </Stack>
-        </Group>
-        <Group>
+        }
+        actions={
+        <>
           {canSeeHealth && (
             <Button
               variant="light"
@@ -69,8 +71,9 @@ export function PersonPage() {
               {t("finance.action.edit")}
             </Button>
           )}
-        </Group>
-      </Group>
+        </>
+        }
+      />
 
       {canSeeHealth && <ProfileSummary personId={person.id} />}
 

@@ -28,6 +28,7 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { IconCheck, IconLockOpen, IconPencil, IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
 
 import { RecordFormModal } from "@/components/records/RecordFormModal";
 import type { Row } from "@/components/records/fields";
@@ -78,9 +79,11 @@ export function CabinetPage() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between">
-        <Group>
-          <Title order={2}>{t("cabinet.title")}</Title>
+      <PageHeader
+        title={t("cabinet.title")}
+        subtitle={t("page.cabinet.subtitle")}
+        actions={
+        <>
           {counts.expired > 0 && (
             <Badge color="red" size="lg">
               {t("cabinet.expiredCount", { count: counts.expired })}
@@ -91,13 +94,14 @@ export function CabinetPage() {
               {t("cabinet.soonCount", { count: counts.soon })}
             </Badge>
           )}
-        </Group>
-        {canEdit && (
-          <Button leftSection={<IconPlus size={16} />} onClick={() => setItemForm("new")}>
-            {t("cabinet.addMedicine")}
-          </Button>
-        )}
-      </Group>
+          {canEdit && (
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setItemForm("new")}>
+              {t("cabinet.addMedicine")}
+            </Button>
+          )}
+        </>
+        }
+      />
 
       <Group>
         <TextInput

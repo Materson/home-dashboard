@@ -1,6 +1,7 @@
 /** Overview tile: my next reminders (notes, visits, doses, expiries …).
  *  Private ones show only a generic title — the server already redacts them. */
-import { Anchor, Group, Stack, Text } from "@mantine/core";
+import { Anchor, Group, Stack, Text, ThemeIcon } from "@mantine/core";
+import { IconBell } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -27,21 +28,32 @@ export function UpcomingTile() {
     );
   }
   return (
-    <Stack gap={4}>
-      {rows.map((r) => (
-        <Group key={r.id} gap="xs" wrap="nowrap">
-          <Text size="sm" c="dimmed" w={110} style={{ flexShrink: 0 }}>
-            {fmtDateTime(r.due_at)}
-          </Text>
-          {r.link ? (
-            <Anchor component={Link} to={r.link} size="sm" lineClamp={1}>
-              {r.title}
-            </Anchor>
-          ) : (
-            <Text size="sm" lineClamp={1}>
-              {r.title}
+    <Stack gap={0}>
+      {rows.map((r, i) => (
+        <Group
+          key={r.id}
+          gap="sm"
+          wrap="nowrap"
+          py={8}
+          style={i ? { borderTop: "1px solid var(--mantine-color-default-border)" } : undefined}
+        >
+          <ThemeIcon variant="light" size={32} radius="md">
+            <IconBell size={16} />
+          </ThemeIcon>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            {r.link ? (
+              <Anchor component={Link} to={r.link} size="sm" fw={500} c="var(--mantine-color-text)" lineClamp={1}>
+                {r.title}
+              </Anchor>
+            ) : (
+              <Text size="sm" fw={500} lineClamp={1}>
+                {r.title}
+              </Text>
+            )}
+            <Text size="xs" c="dimmed">
+              {fmtDateTime(r.due_at)}
             </Text>
-          )}
+          </div>
         </Group>
       ))}
     </Stack>

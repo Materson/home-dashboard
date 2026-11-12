@@ -15,6 +15,8 @@ import { DatePickerInput } from "@mantine/dates";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { isoDate, parseIsoDate } from "@/lib/format";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
+
 import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 
 import { financeApi, type Loan, type OverpaymentComparison, type Schedule } from "./api";
@@ -33,7 +35,7 @@ export function LoansPage() {
 
   return (
     <Stack gap="lg">
-      <Title order={2}>{t("loans.title")}</Title>
+      <PageHeader title={t("loans.title")} subtitle={t("page.loans.subtitle")} />
 
       {loans.isSuccess && !loans.data.length && <Alert color="gray">{t("loans.empty")}</Alert>}
 

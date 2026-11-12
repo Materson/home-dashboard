@@ -3,9 +3,10 @@
  * and the stock at home. Anyone with household access reads; edit changes.
  */
 import { useState } from "react";
-import { Badge, Group, Paper, Stack, Tabs, Title } from "@mantine/core";
+import { Badge, Group, Paper, Stack, Tabs } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
 
 import { usePermissions } from "@/features/auth/usePermissions";
 
@@ -29,7 +30,7 @@ export function HouseholdPage() {
 
   return (
     <Stack gap="lg">
-      <Title order={2}>{t("household.title")}</Title>
+      <PageHeader title={t("household.title")} subtitle={t("page.household.subtitle")} />
       <Paper withBorder p="md">
         <Tabs value={tab} onChange={setTab} keepMounted={false}>
           <Tabs.List>

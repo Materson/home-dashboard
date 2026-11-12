@@ -31,6 +31,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
+import { PageHeader } from "@/components/PageHeader";
+
 import { fmtDate, fmtMoney, fmtNumber, isoDate, parseIsoDate } from "@/lib/format";
 
 import { carsApi, type Car, type CarSummary } from "./api";
@@ -75,9 +77,11 @@ export function CarsPage() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between">
-        <Group>
-          <Title order={2}>{t("nav.cars")}</Title>
+      <PageHeader
+        title={t("nav.cars")}
+        subtitle={t("page.cars.subtitle")}
+        actions={
+        <>
           {!!cars.data?.length && (
             <Select
               data={cars.data.map((c) => ({
@@ -111,8 +115,6 @@ export function CarsPage() {
               </Button>
             </>
           )}
-        </Group>
-        <Group>
           <Switch
             label={t("cars.showArchived")}
             checked={showArchived}
@@ -121,8 +123,9 @@ export function CarsPage() {
           <Button leftSection={<IconPlus size={16} />} onClick={() => setModal({ open: true, car: null })}>
             {t("cars.addCar")}
           </Button>
-        </Group>
-      </Group>
+        </>
+        }
+      />
 
       {cars.isSuccess && !cars.data.length && <Alert color="gray">{t("cars.empty")}</Alert>}
 

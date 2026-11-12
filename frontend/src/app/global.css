@@ -1,0 +1,28 @@
+/* Small global touches on top of Mantine (theme.ts holds the rest). */
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv11", "ss01"; /* Inter: simpler 1, open digits */
+}
+
+/* Amounts and dates line up in columns. */
+.mantine-Table-td,
+.mantine-NumberInput-input {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Table headers: small, quiet labels. */
+.mantine-Table-th {
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--mantine-color-dimmed);
+}
+
+/* Calm scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4)) transparent;
+}

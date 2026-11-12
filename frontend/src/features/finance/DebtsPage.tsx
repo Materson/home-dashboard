@@ -27,6 +27,8 @@ import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isoDate, parseIsoDate } from "@/lib/format";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
+
 import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 
 import { financeApi, type DebtBalance, type DebtDirection, type DebtEntryInput } from "./api";
@@ -75,19 +77,22 @@ export function DebtsPage() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between">
-        <Title order={2}>{t("debts.title")}</Title>
-        <Group>
-          <Switch
-            label={t("debts.showSettled")}
-            checked={showSettled}
-            onChange={(e) => setShowSettled(e.currentTarget.checked)}
-          />
-          <Button leftSection={<IconPlus size={16} />} onClick={() => setModalOpen(true)}>
-            {t("debts.add")}
-          </Button>
-        </Group>
-      </Group>
+      <PageHeader
+        title={t("debts.title")}
+        subtitle={t("page.debts.subtitle")}
+        actions={
+          <>
+            <Switch
+              label={t("debts.showSettled")}
+              checked={showSettled}
+              onChange={(e) => setShowSettled(e.currentTarget.checked)}
+            />
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setModalOpen(true)}>
+              {t("debts.add")}
+            </Button>
+          </>
+        }
+      />
 
       <Paper withBorder p="md">
         <Table highlightOnHover>

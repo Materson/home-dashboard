@@ -15,12 +15,13 @@ import {
   SimpleGrid,
   Stack,
   Text,
-  Title,
   UnstyledButton,
 } from "@mantine/core";
 import { IconArchive, IconPencil, IconPlus } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
+
 import { Link } from "react-router-dom";
 
 import type { FieldDef, Row } from "@/components/records/fields";
@@ -51,14 +52,17 @@ export function PeoplePage() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between">
-        <Title order={2}>{t("people.title")}</Title>
-        {canManage && (
-          <Button leftSection={<IconPlus size={16} />} onClick={() => setForm("new")}>
-            {t("people.add")}
-          </Button>
-        )}
-      </Group>
+      <PageHeader
+        title={t("people.title")}
+        subtitle={t("page.people.subtitle")}
+        actions={
+          canManage && (
+            <Button leftSection={<IconPlus size={16} />} onClick={() => setForm("new")}>
+              {t("people.add")}
+            </Button>
+          )
+        }
+      />
 
       <SimpleGrid cols={{ base: 1, xs: 2, md: 3, lg: 4 }}>
         {(people.data ?? []).map((p) => (

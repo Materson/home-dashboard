@@ -13,12 +13,13 @@ import {
   ScrollArea,
   Stack,
   Text,
-  Title,
 } from "@mantine/core";
 import { IconLock, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
+
+import { PageHeader } from "@/components/PageHeader";
 
 import { fmtDateTime } from "@/lib/format";
 
@@ -47,19 +48,22 @@ export function AssistantPage() {
 
   return (
     <Stack gap="md">
-      <Group justify="space-between">
-        <Title order={2}>{t("assistant.title")}</Title>
-        <Button
-          leftSection={<IconPlus size={16} />}
-          variant="light"
-          onClick={() => {
-            select(null);
-            setFresh((n) => n + 1);
-          }}
-        >
-          {t("assistant.new")}
-        </Button>
-      </Group>
+      <PageHeader
+        title={t("assistant.title")}
+        subtitle={t("page.assistant.subtitle")}
+        actions={
+          <Button
+            leftSection={<IconPlus size={16} />}
+            variant="light"
+            onClick={() => {
+              select(null);
+              setFresh((n) => n + 1);
+            }}
+          >
+            {t("assistant.new")}
+          </Button>
+        }
+      />
       <Grid>
         <Grid.Col span={{ base: 12, md: 4 }}>
           <Paper withBorder p="xs">

@@ -8,19 +8,18 @@
 import { useState } from "react";
 import {
   ActionIcon,
-  Anchor,
   Badge,
-  Group,
   Paper,
   Stack,
   Tabs,
   Text,
-  Title,
   Tooltip,
 } from "@mantine/core";
 import { IconArrowLeft, IconPaperclip } from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
+
 import { Link, useParams } from "react-router-dom";
 
 import type { Row } from "@/components/records/fields";
@@ -97,15 +96,17 @@ export function HealthPersonPage() {
 
   return (
     <Stack gap="lg">
-      <Group>
-        <Anchor component={Link} to="/health" c="dimmed">
-          <Group gap={4}>
-            <IconArrowLeft size={16} />
-            {t("health.choose.back")}
-          </Group>
-        </Anchor>
-        <Title order={2}>{name}</Title>
-      </Group>
+      <PageHeader
+        title={name}
+        subtitle={t("page.healthPerson.subtitle")}
+        before={
+          <Tooltip label={t("health.choose.back")}>
+            <ActionIcon component={Link} to="/health" variant="default" size="lg" radius="md" aria-label={t("health.choose.back")}>
+              <IconArrowLeft size={18} />
+            </ActionIcon>
+          </Tooltip>
+        }
+      />
 
       <ProfileSummary personId={personId} />
       <DosesCard personId={personId} />

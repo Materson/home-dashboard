@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { MantineProvider, createTheme } from "@mantine/core";
+import { MantineProvider } from "@mantine/core";
 import { DatesProvider } from "@mantine/dates";
 import { Notifications } from "@mantine/notifications";
 import { useTranslation } from "react-i18next";
@@ -11,11 +11,13 @@ import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
 import "@mantine/dates/styles.css";
 import "@mantine/charts/styles.css";
+import "@fontsource-variable/inter";
+import "@/app/global.css";
 
 import "@/i18n";
 import { App } from "@/app/App";
+import { theme } from "@/app/theme";
 
-const theme = createTheme({ primaryColor: "indigo", defaultRadius: "md" });
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });

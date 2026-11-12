@@ -28,6 +28,7 @@ import {
 import { IconArrowMerge, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
 
 import { usePermissions } from "@/features/auth/usePermissions";
 
@@ -48,7 +49,7 @@ export function CategoriesPage() {
 
   return (
     <Stack gap="lg">
-      <Title order={2}>{t("finance.categories.title")}</Title>
+      <PageHeader title={t("finance.categories.title")} subtitle={t("page.categories.subtitle")} />
       <Grid>
         {(["expense", "income"] as Kind[]).map((kind) => (
           <Grid.Col key={kind} span={{ base: 12, md: 6 }}>

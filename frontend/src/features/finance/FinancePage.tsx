@@ -13,7 +13,6 @@ import {
   Table,
   Text,
   TextInput,
-  Title,
   Tooltip,
 } from "@mantine/core";
 import { MonthPickerInput } from "@mantine/dates";
@@ -28,6 +27,7 @@ import {
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
 
 import {
   financeApi,
@@ -172,17 +172,17 @@ export function FinancePage() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between">
-        <Group>
-          <Title order={2}>{t("nav.finance")}</Title>
+      <PageHeader
+        title={t("nav.transactions")}
+        subtitle={t("page.transactions.subtitle")}
+        actions={
+        <>
           <MonthPickerInput
             value={month}
             onChange={(d) => d && setMonth(firstOfMonth(d))}
             valueFormat="MMMM YYYY"
             w={200}
           />
-        </Group>
-        <Group>
           <Badge color="teal" size="lg">
             {t("finance.totals.income", { value: monthTotals.income.toFixed(2) })}
           </Badge>
@@ -200,8 +200,9 @@ export function FinancePage() {
           <Button leftSection={<IconPlus size={16} />} onClick={openNew}>
             {t("finance.tx.add")}
           </Button>
-        </Group>
-      </Group>
+        </>
+        }
+      />
 
       {categoriesQ.isError && <Alert color="red">{t("common.noAccess")}</Alert>}
 

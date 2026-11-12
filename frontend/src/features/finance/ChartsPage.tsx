@@ -26,6 +26,7 @@ import { DatePickerInput, MonthPickerInput, YearPickerInput } from "@mantine/dat
 import { IconArrowLeft, IconChevronRight } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { PageHeader } from "@/components/PageHeader";
 
 import { peopleApi } from "@/features/people/api";
 import { fmtMoney } from "@/lib/format";
@@ -85,9 +86,11 @@ export function ChartsPage() {
 
   return (
     <Stack gap="lg">
-      <Group justify="space-between">
-        <Title order={2}>{t("finance.charts.title")}</Title>
-        <Group>
+      <PageHeader
+        title={t("finance.charts.title")}
+        subtitle={t("page.charts.subtitle")}
+        actions={
+        <>
           <SegmentedControl
             value={mode}
             onChange={(v) => setMode(v as PeriodMode)}
@@ -124,8 +127,9 @@ export function ChartsPage() {
             w={200}
             aria-label={t("finance.field.forWhom")}
           />
-        </Group>
-      </Group>
+        </>
+        }
+      />
 
       <Paper withBorder p="md">
         <Title order={5} mb="sm">
