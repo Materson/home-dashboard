@@ -1,0 +1,168 @@
+# Home Dashboard on the NAS — a Portainer stack (docs/deploy-nas.md).
+#
+# The images come from GitHub's registry, built by .github/workflows/release.yml
+# from a version tag; every setting comes from the stack's environment
+# variables (Portainer → Stacks → this stack → Environment variables). The
+# required ones stop the deploy with a message when missing. Nothing else is
+# needed on the NAS: the backend migrates the database on start, and a fresh
+# install opens first-time setup in the browser.
+#
+# Update: push a new tag, wait for the build, then "Pull and redeploy" here
+# (APP_VERSION=latest) or set APP_VERSION to the new tag.
+
+name: home-dashboard
+
+x-backend: &backend
+  image: ${IMAGE_PREFIX:?set IMAGE_PREFIX, e.g. ghcr.io/your-github-name/home-dashboard}-backend:${APP_VERSION:-latest}
+  restart: unless-stopped
+  environment: &backend-env
+    DJANGO_SETTINGS_MODULE: config.settings.prod
+    DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set DJANGO_SECRET_KEY (ops/gen-secrets.py)}
+    # Decrypts the stored AI / Google keys: keep a copy; a new one makes them unreadable.
+    FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?set FIELD_ENCRYPTION_KEY (ops/gen-secrets.py)}
+    DJANGO_ALLOWED_HOSTS: ${PUBLIC_HOST:?set PUBLIC_HOST, e.g. dashboard.example.com},localhost,backend
+    DJANGO_CSRF_TRUSTED_ORIGINS: https://${PUBLIC_HOST}
+    SPA_ORIGIN: https://${PUBLIC_HOST}
+    # Letters and digits only in MARIADB_PASSWORD (it's part of this URL).
+    DATABASE_URL: mysql://home:${MARIADB_PASSWORD:?set MARIADB_PASSWORD}@db:3306/home
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CELERY_RESULT_BACKEND: redis://redis:6379/2
+    TZ: ${TZ:-Europe/Warsaw}
+    # Optional: e-mail, web push, Google Calendar, Slack.
+    EMAIL_HOST: ${EMAIL_HOST:-}
+    EMAIL_PORT: ${EMAIL_PORT:-587}
+    EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+    EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+    EMAIL_USE_TLS: ${EMAIL_USE_TLS:-1}
+    DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-Home Dashboard <noreply@localhost>}
+    VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+    VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+    VAPID_ADMIN_EMAIL: ${VAPID_ADMIN_EMAIL:-}
+    GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+    GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+    GOOGLE_OAUTH_REDIRECT_URI: https://${PUBLIC_HOST}/api/gcal/callback
+    SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+    SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+    SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+  volumes:
+    - media:/app/media
+  depends_on: &needs-data
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: home
+      MARIADB_USER: home
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?set MARIADB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set MARIADB_ROOT_PASSWORD}
+      TZ: ${TZ:-Europe/Warsaw}
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-file-per-table=1
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # Migrations, the default roles and the admin's static files, then the API.
+  backend:
+    <<: *backend
+    volumes:
+      - media:/app/media
+      - static:/app/staticfiles
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 3m # migrations on the first start / after an update
+
+  # These wait for the backend, so they start on a migrated database.
+  worker:
+    <<: *backend
+    command: ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=2"]
+    depends_on:
+      <<: *needs-data
+      backend:
+        condition: service_healthy
+
+  beat:
+    <<: *backend
+    command: ["celery", "-A", "config", "beat", "--loglevel=info"]
+    depends_on:
+      <<: *needs-data
+      backend:
+        condition: service_healthy
+
+  # The app (and /api, /admin, the protected files) — Nginx Proxy Manager
+  # points at the NAS's LAN IP and WEB_PORT.
+  web:
+    image: ${IMAGE_PREFIX}-web:${APP_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - media:/var/www/media:ro
+      - static:/var/www/static:ro
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-8080}:80"
+
+  # Nightly at 03:17 (TZ): database + files, encrypted, kept BACKUP_KEEP_DAYS.
+  # Console of this container: `backup-now` (e.g. before an update), or
+  # `restore /backups/<file>` (writes the files back: media not read-only).
+  backup:
+    image: ${IMAGE_PREFIX}-backup:${APP_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: home
+      MARIADB_USER: home
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:?set BACKUP_PASSPHRASE (ops/gen-secrets.py) and keep a copy}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      TZ: ${TZ:-Europe/Warsaw}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - media:/media
+      - ${BACKUP_HOST_DIR:?set BACKUP_HOST_DIR, a NAS folder, e.g. /share/Backups/home-dashboard}:/backups
+
+  # Optional (COMPOSE_PROFILES=slack): the Slack bot.
+  slackbot:
+    <<: *backend
+    command: ["python", "manage.py", "run_slackbot"]
+    profiles: ["slack"]
+    depends_on:
+      <<: *needs-data
+      backend:
+        condition: service_healthy
+
+volumes:
+  db-data:
+  redis-data:
+  media:
+  static:

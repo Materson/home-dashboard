@@ -41,7 +41,7 @@ Settings; the Django admin (`/admin/`) is only a fallback.
 | `uv run ruff check . && uv run ruff format .` | lint + format |
 | `uv run celery -A config worker -l info` | run a Celery worker locally |
 | `uv run celery -A config beat -l info` | run beat |
-| `npm run gen:api` | regenerate the typed API client from the backend |
+| `npm run gen:api` | regenerate the typed API client from the running backend (`src/api/schema.ts`, committed) |
 | `npm run test` | Vitest |
 | `npm run build` | production build of the SPA |
 
@@ -53,3 +53,14 @@ docker compose up -d db redis backend worker beat web backup
 ```
 
 Follow `docs/network-setup.md` to expose it over HTTPS.
+
+The API types without a running server:
+
+```powershell
+cd backend
+uv run python manage.py shell -c "import json; from config.api import api; json.dump(api.get_openapi_schema(path_prefix='/api/'), open('../frontend/openapi.json', 'w'))"
+cd ../frontend
+npx openapi-typescript openapi.json -o src/api/schema.ts; Remove-Item openapi.json
+```
+
+Releases and the NAS: [deploy-nas.md](deploy-nas.md).

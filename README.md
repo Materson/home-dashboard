@@ -29,7 +29,14 @@ Open http://localhost:5173: with no account yet, the app starts first-time
 setup (your admin account, then the family). Accounts, roles and access are
 managed in the app (Settings), no Django admin needed.
 
-## Full stack (NAS)
+## On the NAS (Portainer)
+
+**[docs/deploy-nas.md](docs/deploy-nas.md)** — the GitHub repo and releases
+(a tag builds the images), the Portainer stack (`deploy/docker-compose.yml`,
+settings as stack variables), first-time setup, every update after, backups
+and restore.
+
+## Full stack on this PC
 
 ```powershell
 docker compose build
