@@ -172,3 +172,5 @@ VAPID_PUBLIC_KEY = env("VAPID_PUBLIC_KEY", default="")
 VAPID_PRIVATE_KEY = env("VAPID_PRIVATE_KEY", default="")
 VAPID_ADMIN_EMAIL = env("VAPID_ADMIN_EMAIL", default="")
 SPA_ORIGIN = env("SPA_ORIGIN", default="http://localhost:5173")
+# The release running (set by the image build from the git tag).
+APP_VERSION = env("APP_VERSION", default="dev")

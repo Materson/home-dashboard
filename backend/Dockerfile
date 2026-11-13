@@ -35,6 +35,12 @@ RUN groupadd -r app && useradd -r -g app -d /app app \
     && chown -R app:app /app
 USER app
 
+# The release this image is (a git tag, e.g. 1.2.0) — /api/healthz shows it.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 EXPOSE 8000
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
+# The web server (migrations, roles and static files first); the worker,
+# beat and slackbot override the command.
+CMD ["sh", "/app/bin/start-web.sh"]

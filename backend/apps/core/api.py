@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404
@@ -23,7 +24,8 @@ router = Router()
 
 @router.get("/healthz", auth=None)
 def healthz(request: HttpRequest) -> dict[str, str]:
-    return {"status": "ok"}
+    """Up, and which release (after an update: did the new one start?)."""
+    return {"status": "ok", "version": settings.APP_VERSION}
 
 
 @router.get("/csrf", auth=None)

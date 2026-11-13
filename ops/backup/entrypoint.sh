@@ -2,10 +2,12 @@
 # Nightly backup: mariadb-dump + /media tarball, encrypted with the passphrase
 # from the environment, rotated after BACKUP_KEEP_DAYS.
 #
-# Runs forever inside its own container; sleeps until 03:17 every night.
+# Runs forever inside its own container (ops/backup/Dockerfile — the tools
+# are in the image); sleeps until 03:17 every night (TZ, e.g. Europe/Warsaw).
+#
+# A backup right now (e.g. before an update): in Portainer open the backup
+# container's Console and run `backup-now`.
 set -eu
-
-apk add --no-cache mariadb-client gnupg tar coreutils tzdata >/dev/null
 
 : "${MARIADB_DATABASE:?}"
 : "${MARIADB_USER:?}"
@@ -45,8 +47,8 @@ run_once() {
     trap - EXIT
 }
 
-# If the container was told to run once (for ad-hoc), honor it.
-if [ "${RUN_ONCE:-0}" = "1" ]; then
+# Run once and stop (`backup-now`, or RUN_ONCE=1).
+if [ "${1:-}" = "now" ] || [ "${RUN_ONCE:-0}" = "1" ]; then
     run_once
     exit 0
 fi

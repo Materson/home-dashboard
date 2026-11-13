@@ -913,6 +913,7 @@
   "nav.section.family": "Rodzina i dom",
   "nav.section.manage": "Zarządzanie",
   "shell.logout": "Wyloguj",
+  "shell.version": "Wersja {{version}}",
   "shell.darkMode": "Tryb ciemny",
   "shell.lightMode": "Tryb jasny",
   "shell.more": "Więcej",

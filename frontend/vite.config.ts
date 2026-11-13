@@ -4,6 +4,8 @@ import { VitePWA } from "vite-plugin-pwa";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
+  // The release, from the image build (APP_VERSION); "dev" when run locally.
+  define: { __APP_VERSION__: JSON.stringify(process.env.APP_VERSION ?? "dev") },
   plugins: [
     react(),
     VitePWA({

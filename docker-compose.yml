@@ -49,41 +49,58 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Builds and runs the whole stack from this checkout (`docker compose up
+  # --build`, settings from .env). On the NAS: deploy/docker-compose.yml.
+  #
+  # The image's start (backend/bin/start-web.sh) migrates the database, seeds
+  # the default roles and collects the admin's static files, then serves —
+  # a fresh install needs no shell: open the app and run first setup.
   backend:
     <<: *backend-base
-    # Brings the database up to date (and the default roles) before serving,
-    # so a fresh install needs no shell: open the app and run first setup.
-    command:
-      - sh
-      - -c
-      - >-
-        python manage.py migrate --noinput &&
-        python manage.py seed_roles &&
-        exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000
-        --proxy-headers --forwarded-allow-ips '*'
     expose: ["8000"]
+    volumes:
+      - media:/app/media
+      - static:/app/staticfiles
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 3m
 
+  # These wait for the backend, so they start on a migrated database.
   worker:
     <<: *backend-base
     command: ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=2"]
+    depends_on: &after-backend
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
 
   beat:
     <<: *backend-base
     command: ["celery", "-A", "config", "beat", "--loglevel=info"]
+    depends_on: *after-backend
 
   slackbot:
     <<: *backend-base
     command: ["python", "manage.py", "run_slackbot"]
     profiles: ["slack"]
+    depends_on: *after-backend
 
   web:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     volumes:
       - media:/var/www/media:ro
+      - static:/var/www/static:ro
     # Only this port is published; Nginx Proxy Manager targets it.
     # Bind to the LAN IP of the NAS in production (edit WEB_BIND).
     ports:
@@ -100,20 +117,20 @@ services:
     restart: unless-stopped
 
   backup:
-    image: alpine:3.20
+    build:
+      context: ./ops/backup
     env_file: .env
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - media:/media:ro
-      - ./ops/backup:/ops:ro
+      - media:/media
       - ${BACKUP_HOST_DIR:-./data/backups}:/backups
-    entrypoint: ["/bin/sh", "/ops/entrypoint.sh"]
     restart: unless-stopped
 
 volumes:
   db-data:
   redis-data:
   media:
+  static:
   ollama-data:

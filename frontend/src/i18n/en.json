@@ -895,6 +895,7 @@
   "nav.section.family": "Family & home",
   "nav.section.manage": "Manage",
   "shell.logout": "Log out",
+  "shell.version": "Version {{version}}",
   "shell.darkMode": "Dark mode",
   "shell.lightMode": "Light mode",
   "shell.more": "More",

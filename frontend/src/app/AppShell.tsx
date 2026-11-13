@@ -188,6 +188,7 @@ function UserBlock() {
           <Menu.Item color="red" leftSection={<IconLogout size={16} />} onClick={logout}>
             {t("shell.logout")}
           </Menu.Item>
+          <Menu.Label>{t("shell.version", { version: __APP_VERSION__ })}</Menu.Label>
         </Menu.Dropdown>
       </Menu>
       <ColorSchemeToggle />

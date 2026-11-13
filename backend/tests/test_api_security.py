@@ -12,7 +12,9 @@ pytestmark = pytest.mark.django_db
 
 def test_anonymous_requests_get_401():
     assert Client().get("/api/finance/categories").status_code == 401
-    assert Client().get("/api/healthz").status_code == 200  # stays public
+    health = Client().get("/api/healthz")  # stays public, says which release runs
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok", "version": "dev"}
 
 
 def test_unsafe_requests_need_a_csrf_token():

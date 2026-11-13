@@ -5,6 +5,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci || npm install
 COPY . .
+# The release (a git tag, e.g. 1.2.0), shown in the app's user menu.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
