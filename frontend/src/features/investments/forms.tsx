@@ -21,6 +21,7 @@ import {
 import { DatePickerInput } from "@mantine/dates";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { ChoiceTabs } from "@/components/ChoiceTabs";
 
 import { AmountInput, isPositiveAmount } from "@/components/AmountInput";
 import { fmtDate, fmtMoney, fmtNumber, fmtQty, isoDate, parseIsoDate } from "@/lib/format";
@@ -244,9 +245,10 @@ export function AssetModal(props: { asset: Asset | null | "new"; onClose: () => 
     <Modal opened={props.asset !== null} onClose={props.onClose} title={t(editing ? "investments.edit" : "investments.add")} size="lg">
       <Stack>
         {!editing && (
-          <SegmentedControl
+          <ChoiceTabs
+            label={t("investments.kindFilter")}
             value={form.kind}
-            onChange={(v) => setKind(v as AssetKind)}
+            onChange={setKind}
             data={KINDS.map((k) => ({ value: k, label: t(`investments.kind.${k}`) }))}
           />
         )}

@@ -37,6 +37,7 @@ const odometer = (required: boolean): FieldDef => ({
   labelKey: "cars.f.odometer",
   required,
   column: true,
+  phoneKey: "cars.phone.km",
 });
 const cost = (required = false): FieldDef => ({
   name: required ? "total_cost" : "cost",
@@ -51,8 +52,8 @@ export const RECORDS: Record<RecordKind, FieldDef[]> = {
   fuel: [
     date,
     odometer(true),
-    { name: "litres", type: "amount", labelKey: "cars.f.litres", required: true, column: true },
-    { name: "price_per_litre", type: "amount", scale: 3, labelKey: "cars.f.pumpPrice", column: true },
+    { name: "litres", type: "amount", labelKey: "cars.f.litres", required: true, column: true, phoneKey: "cars.phone.litres" },
+    { name: "price_per_litre", type: "amount", scale: 3, labelKey: "cars.f.pumpPrice", column: true, phoneKey: "cars.phone.perLitre" },
     // Discount and paid derive each other — whichever the user typed wins:
     //  - paid typed, discount not  → discount = litres × price − paid (if > threshold)
     //  - otherwise                 → paid = litres × price − discount
@@ -62,6 +63,7 @@ export const RECORDS: Record<RecordKind, FieldDef[]> = {
       labelKey: "cars.f.discount",
       hintKey: "cars.f.discountHint",
       column: true,
+      phoneKey: "cars.phone.discount",
       currencyField: "currency",
       compute: {
         from: ["litres", "price_per_litre", "total_cost"],
@@ -78,6 +80,7 @@ export const RECORDS: Record<RecordKind, FieldDef[]> = {
     {
       ...cost(true),
       labelKey: "cars.f.paid",
+      phone: "value", // phones: the date, then what was paid
       hintKey: "cars.f.paidHint",
       compute: {
         from: ["litres", "price_per_litre", "discount"],
@@ -91,7 +94,7 @@ export const RECORDS: Record<RecordKind, FieldDef[]> = {
       },
     },
     { name: "full_tank", type: "bool", labelKey: "cars.f.fullTank", default: true, column: true, hintKey: "cars.f.fullTankHint" },
-    { name: "station", type: "text", labelKey: "cars.f.station", column: true },
+    { name: "station", type: "text", labelKey: "cars.f.station", column: true, phoneKey: "cars.phone.plain" },
     notes,
   ],
   maintenance: [
@@ -144,12 +147,13 @@ export const RECORDS: Record<RecordKind, FieldDef[]> = {
       hintKey: "cars.f.validUntilHint",
       required: true,
       column: true,
+      phoneKey: "cars.phone.validUntil",
       // Inspection and insurance usually run a year; type another date to override.
       compute: { from: ["date"], fn: (s) => plusOneYear(s.date) },
     },
-    { name: "provider", type: "text", labelKey: "cars.f.provider", column: true },
+    { name: "provider", type: "text", labelKey: "cars.f.provider", column: true, phoneKey: "cars.phone.plain" },
     odometer(false),
-    cost(),
+    { ...cost(), phone: "value" }, // phones: the kind, then the cost
     notes,
   ],
   odometer: [date, odometer(true), notes],

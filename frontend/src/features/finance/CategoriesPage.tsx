@@ -123,11 +123,12 @@ function KindColumn(props: {
             if (name.trim()) add.mutate();
           }}
         >
-          <Group gap="xs" wrap="nowrap" mb="sm">
+          {/* Phones: the parent picker and the button wrap under the name. */}
+          <Group gap="xs" mb="sm">
             <ColorInput w={56} withPicker={false} withPreview swatches={SWATCHES} swatchesPerRow={7} value={color} onChange={setColor} styles={{ input: { color: "transparent" } }} />
             <TextInput
               ref={nameInput}
-              style={{ flex: 1 }}
+              style={{ flex: "1 1 180px" }}
               placeholder={t(parentId ? "finance.categories.newSubName" : "finance.categories.newName")}
               value={name}
               onChange={(e) => setName(e.currentTarget.value)}
@@ -173,13 +174,16 @@ function KindColumn(props: {
                       </Badge>
                     )}
                   </Group>
+                  <Text size="xs" c="dimmed" hiddenFrom="sm">
+                    {t("finance.categories.used", { count: c.used })}
+                  </Text>
                 </Table.Td>
-                <Table.Td ta="right">
+                <Table.Td ta="right" visibleFrom="sm">
                   <Text size="xs" c="dimmed">
                     {t("finance.categories.used", { count: c.used })}
                   </Text>
                 </Table.Td>
-                <Table.Td w={136}>
+                <Table.Td w={{ base: "auto", sm: 136 }}>
                   {props.canEdit && (
                     <Group gap={2} justify="flex-end" wrap="nowrap">
                       {!isSub && (

@@ -37,7 +37,7 @@ import { fmtDate, fmtMoney, fmtNumber, isoDate, parseIsoDate } from "@/lib/forma
 
 import { carsApi, type Car, type CarSummary } from "./api";
 import { CarModal } from "./CarModal";
-import { RECORD_TABS } from "./records";
+import { type CarTab, RECORD_TABS } from "./records";
 import { OdometerSection } from "./OdometerSection";
 import { RecordSection } from "./RecordSection";
 import { ServiceSection } from "./ServiceSection";
@@ -50,6 +50,7 @@ export function CarsPage() {
   const qc = useQueryClient();
   const [showArchived, setShowArchived] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [tab, setTab] = useState<CarTab>("fuel");
   const [modal, setModal] = useState<{ open: boolean; car: Car | null }>({ open: false, car: null });
 
   const cars = useQuery({
@@ -141,8 +142,17 @@ export function CarsPage() {
 
       {car && (
         <Paper withBorder p="md">
-          <Tabs defaultValue="fuel" keepMounted={false}>
-            <Tabs.List>
+          <Tabs value={tab} onChange={(v) => v && setTab(v as CarTab)} keepMounted={false}>
+            {/* Phones: a dropdown — the four tabs don't fit a row. */}
+            <Select
+              hiddenFrom="sm"
+              aria-label={t("cars.records")}
+              value={tab}
+              onChange={(v) => v && setTab(v as CarTab)}
+              data={RECORD_TABS.map((r) => ({ value: r.key, label: t(r.labelKey) }))}
+              allowDeselect={false}
+            />
+            <Tabs.List visibleFrom="sm">
               {RECORD_TABS.map((tab) => (
                 <Tabs.Tab key={tab.key} value={tab.key}>
                   {t(tab.labelKey)}

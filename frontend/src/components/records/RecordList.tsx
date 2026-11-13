@@ -2,7 +2,7 @@
  * Table + add/edit/delete for one field-driven record type. The feature
  * supplies the field list and the three API calls; this handles the rest.
  */
-import { type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import {
   ActionIcon,
   Button,
@@ -29,7 +29,52 @@ import {
 } from "./fields";
 import { type FormExtras, RecordFormModal } from "./RecordFormModal";
 
-export type ExtraColumn = { headerKey: string; numeric?: boolean; render: (r: Row) => ReactNode };
+export type ExtraColumn = {
+  headerKey: string;
+  numeric?: boolean;
+  render: (r: Row) => ReactNode;
+  /** On phones (in the line under the row's lead): this text instead of
+   *  "Header: value", or null to leave it out for this row. */
+  phoneText?: (r: Row) => string | null;
+};
+
+/** The line under a row's lead on phones: the columns that don't fit, as
+ *  "Label: value" (or the field's own phone text); empty ones left out. */
+function phoneLine(
+  r: Row,
+  fields: FieldDef[],
+  extra: ExtraColumn[],
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  choices?: Choices,
+): ReactNode[] {
+  const parts: ReactNode[] = [];
+  for (const f of fields) {
+    const value = display(f, r, t, choices);
+    if (value === "—") continue;
+    if (f.type === "bool") parts.push(t(f.labelKey)); // ✓ — the label says it
+    else parts.push(f.phoneKey ? t(f.phoneKey, { value }) : `${t(f.labelKey)}: ${value}`);
+  }
+  for (const c of extra) {
+    if (c.phoneText) {
+      const text = c.phoneText(r);
+      if (text) parts.push(text);
+      continue;
+    }
+    const node = c.render(r);
+    if (node === null || node === undefined || node === "" || node === "—") continue;
+    parts.push(
+      <>
+        {t(c.headerKey)}: {node}
+      </>,
+    );
+  }
+  return parts.map((p, i) => (
+    <Fragment key={i}>
+      {i ? " · " : ""}
+      {p}
+    </Fragment>
+  ));
+}
 
 export function RecordList(props: {
   fields: FieldDef[];
@@ -70,6 +115,10 @@ export function RecordList(props: {
   const hidden = props.hiddenColumns ?? [];
   const columns = props.fields.filter((f) => (f.column || f.truncate) && !hidden.includes(f.name));
   const extra = props.extraColumns ?? [];
+  // Phones: the lead and the "value" columns stay; the rest go under the lead.
+  const lead = columns.find((f) => f.phone === "lead") ?? columns[0];
+  const onPhone = (f: FieldDef) => f === lead || f.phone === "value";
+  const under = columns.filter((f) => !onPhone(f));
 
   return (
     <Stack gap="sm">
@@ -85,12 +134,12 @@ export function RecordList(props: {
           <Table.Thead>
             <Table.Tr>
               {columns.map((f) => (
-                <Table.Th key={f.name} ta={isNumeric(f) ? "right" : undefined}>
+                <Table.Th key={f.name} ta={isNumeric(f) ? "right" : undefined} visibleFrom={onPhone(f) ? undefined : "sm"}>
                   {t(f.labelKey)}
                 </Table.Th>
               ))}
               {extra.map((c) => (
-                <Table.Th key={c.headerKey} ta={c.numeric ? "right" : undefined}>
+                <Table.Th key={c.headerKey} ta={c.numeric ? "right" : undefined} visibleFrom="sm">
                   {t(c.headerKey)}
                 </Table.Th>
               ))}
@@ -105,12 +154,17 @@ export function RecordList(props: {
                 style={props.onRowClick ? { cursor: "pointer" } : undefined}
               >
                 {columns.map((f) => (
-                  <Table.Td key={f.name} ta={isNumeric(f) ? "right" : undefined}>
+                  <Table.Td key={f.name} ta={isNumeric(f) ? "right" : undefined} visibleFrom={onPhone(f) ? undefined : "sm"}>
                     <Cell text={display(f, r, t, props.choices)} max={f.truncate} />
+                    {f === lead && (under.length > 0 || extra.length > 0) && (
+                      <Text size="xs" c="dimmed" hiddenFrom="sm">
+                        {phoneLine(r, under, extra, t, props.choices)}
+                      </Text>
+                    )}
                   </Table.Td>
                 ))}
                 {extra.map((c) => (
-                  <Table.Td key={c.headerKey} ta={c.numeric ? "right" : undefined}>
+                  <Table.Td key={c.headerKey} ta={c.numeric ? "right" : undefined} visibleFrom="sm">
                     {c.render(r)}
                   </Table.Td>
                 ))}

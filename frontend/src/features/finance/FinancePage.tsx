@@ -7,6 +7,7 @@ import {
   Button,
   Checkbox,
   Group,
+  Menu,
   MultiSelect,
   NumberInput,
   Paper,
@@ -22,6 +23,7 @@ import {
   IconAdjustmentsHorizontal,
   IconBookmarkPlus,
   IconCopy,
+  IconDotsVertical,
   IconFileImport,
   IconFilterOff,
   IconPencil,
@@ -353,10 +355,11 @@ export function FinancePage() {
                   onChange={() => setTicked(allTicked ? [] : shownIds)}
                 />
               </Table.Th>
-              <Table.Th>{t("finance.field.date")}</Table.Th>
+              {/* Phones: date, category and who under the name. */}
+              <Table.Th visibleFrom="sm">{t("finance.field.date")}</Table.Th>
               <Table.Th>{t("finance.field.name")}</Table.Th>
-              <Table.Th>{t("finance.field.category")}</Table.Th>
-              <Table.Th>{t("finance.field.forWhom")}</Table.Th>
+              <Table.Th visibleFrom="sm">{t("finance.field.category")}</Table.Th>
+              <Table.Th visibleFrom="sm">{t("finance.field.forWhom")}</Table.Th>
               <Table.Th ta="right">{t("finance.field.amount")}</Table.Th>
               <Table.Th />
             </Table.Tr>
@@ -369,7 +372,9 @@ export function FinancePage() {
                   <Table.Td>
                     <Checkbox size="xs" aria-label={tx.name} checked={ticked.includes(tx.id)} onChange={() => toggle(tx.id)} />
                   </Table.Td>
-                  <Table.Td>{tx.date}</Table.Td>
+                  <Table.Td visibleFrom="sm" style={{ whiteSpace: "nowrap" }}>
+                    {tx.date}
+                  </Table.Td>
                   <Table.Td>
                     <Group gap={4} wrap="nowrap">
                       {tx.recurring_rule_id && (
@@ -379,9 +384,20 @@ export function FinancePage() {
                       )}
                       {tx.name}
                     </Group>
+                    <Text size="xs" c="dimmed" hiddenFrom="sm">
+                      {[
+                        fmtDate(tx.date),
+                        cat ? categoryPath(cat, categoriesById) : null,
+                        tx.shares.length
+                          ? tx.shares.map((s) => peopleById[s.person_id]?.display_name ?? "…").join(", ")
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
                   </Table.Td>
-                  <Table.Td>{cat ? categoryPath(cat, categoriesById) : tx.category_id.slice(0, 8)}</Table.Td>
-                  <Table.Td>
+                  <Table.Td visibleFrom="sm">{cat ? categoryPath(cat, categoriesById) : tx.category_id.slice(0, 8)}</Table.Td>
+                  <Table.Td visibleFrom="sm">
                     {tx.shares.length ? (
                       <Avatar.Group spacing={6}>
                         {tx.shares.map((s) => {
@@ -404,11 +420,33 @@ export function FinancePage() {
                       </Text>
                     )}
                   </Table.Td>
-                  <Table.Td ta="right" c={cat?.kind === "income" ? "teal" : undefined}>
+                  <Table.Td ta="right" c={cat?.kind === "income" ? "teal" : undefined} style={{ whiteSpace: "nowrap" }}>
                     {tx.amount} {tx.currency}
                   </Table.Td>
                   <Table.Td>
-                    <Group gap={4} justify="flex-end" wrap="nowrap">
+                    {/* Phones: one menu instead of four buttons. */}
+                    <Menu position="bottom-end" withinPortal>
+                      <Menu.Target>
+                        <ActionIcon variant="subtle" color="gray" hiddenFrom="sm" aria-label={t("finance.action.more")}>
+                          <IconDotsVertical size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item leftSection={<IconPencil size={14} />} onClick={() => openEdit(tx)}>
+                          {t("finance.action.edit")}
+                        </Menu.Item>
+                        <Menu.Item leftSection={<IconCopy size={14} />} onClick={() => openDuplicate(tx)}>
+                          {t("finance.action.duplicate")}
+                        </Menu.Item>
+                        <Menu.Item leftSection={<IconBookmarkPlus size={14} />} onClick={() => saveBookmark.mutate(tx)}>
+                          {t("finance.bookmarks.add")}
+                        </Menu.Item>
+                        <Menu.Item color="red" leftSection={<IconTrash size={14} />} onClick={() => del.mutate(tx.id)}>
+                          {t("finance.action.delete")}
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                    <Group gap={4} justify="flex-end" wrap="nowrap" visibleFrom="sm">
                       <Tooltip label={t("finance.action.edit")}>
                         <ActionIcon variant="subtle" onClick={() => openEdit(tx)}>
                           <IconPencil size={16} />

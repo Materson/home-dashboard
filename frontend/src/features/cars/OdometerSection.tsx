@@ -63,8 +63,9 @@ export function OdometerSection({ carId }: { carId: string }) {
             <Table.Tr>
               <Table.Th>{t("cars.f.date")}</Table.Th>
               <Table.Th ta="right">{t("cars.f.odometer")}</Table.Th>
-              <Table.Th ta="right">{t("cars.odo.since")}</Table.Th>
-              <Table.Th>{t("cars.odo.source")}</Table.Th>
+              {/* Phones: the source under the date, the change under the reading. */}
+              <Table.Th ta="right" visibleFrom="sm">{t("cars.odo.since")}</Table.Th>
+              <Table.Th visibleFrom="sm">{t("cars.odo.source")}</Table.Th>
               <Table.Th />
             </Table.Tr>
           </Table.Thead>
@@ -76,12 +77,24 @@ export function OdometerSection({ carId }: { carId: string }) {
                 p.source === "odometer" ? manual.data?.find((r) => r.id === p.record_id) : undefined;
               return (
                 <Table.Tr key={`${p.source}-${p.record_id ?? "initial"}`}>
-                  <Table.Td>{fmtDate(p.date)}</Table.Td>
-                  <Table.Td ta="right">{fmtNumber(p.odometer_km)} km</Table.Td>
-                  <Table.Td ta="right" c={delta !== null && delta < 0 ? "red" : "dimmed"}>
+                  <Table.Td>
+                    {fmtDate(p.date)}
+                    <Text size="xs" c="dimmed" hiddenFrom="sm">
+                      {t(`cars.odo.src.${p.source}`)}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td ta="right">
+                    {fmtNumber(p.odometer_km)} km
+                    {delta ? (
+                      <Text size="xs" c={delta < 0 ? "red" : "dimmed"} hiddenFrom="sm">
+                        {`${delta > 0 ? "+" : ""}${fmtNumber(delta)} km`}
+                      </Text>
+                    ) : null}
+                  </Table.Td>
+                  <Table.Td ta="right" c={delta !== null && delta < 0 ? "red" : "dimmed"} visibleFrom="sm">
                     {delta ? `${delta > 0 ? "+" : ""}${fmtNumber(delta)} km` : ""}
                   </Table.Td>
-                  <Table.Td>
+                  <Table.Td visibleFrom="sm">
                     <Badge variant="light" color={p.source === "odometer" ? "indigo" : "gray"}>
                       {t(`cars.odo.src.${p.source}`)}
                     </Badge>

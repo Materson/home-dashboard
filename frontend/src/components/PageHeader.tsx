@@ -42,7 +42,7 @@ export function PageHeader(props: {
         </div>
       </Group>
       {props.actions && (
-        <Group gap="xs" wrap="wrap">
+        <Group gap="xs" wrap="wrap" className="page-actions">
           {props.actions}
         </Group>
       )}

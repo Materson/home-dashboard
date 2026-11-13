@@ -39,6 +39,14 @@ export type FieldDef = {
   hintKey?: string;
   /** Currency shown next to this amount in the table. */
   currencyField?: string;
+  /**
+   * On phones the table keeps only the row's lead column (this or the first
+   * column) and its "value" columns (e.g. the amount); every other column
+   * goes in a short line under the lead.
+   */
+  phone?: "lead" | "value";
+  /** That line's text for this field, with {{value}} (default "Label: value"). */
+  phoneKey?: string;
   /** Decimal places accepted when typing an "amount" (default 2). Tables always show 2. */
   scale?: number;
   /**

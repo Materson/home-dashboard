@@ -4,6 +4,7 @@
  * reminders depend on every record) and Finance (costs land in the ledger).
  */
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import { RecordFormModal } from "@/components/records/RecordFormModal";
 import { RecordList } from "@/components/records/RecordList";
@@ -20,6 +21,7 @@ const LABELS = {
 };
 
 export function RecordSection({ carId, kind }: { carId: string; kind: RecordKind }) {
+  const { t } = useTranslation();
   return (
     <RecordList
       fields={RECORDS[kind]}
@@ -36,6 +38,9 @@ export function RecordSection({ carId, kind }: { carId: string; kind: RecordKind
                 headerKey: "cars.f.effectivePrice",
                 numeric: true,
                 render: (r) => fmtNumber(r.effective_price_per_litre as string, 2),
+                // Phones: only when a discount made it differ from the pump price.
+                phoneText: (r) =>
+                  r.discount ? t("cars.phone.effective", { value: fmtNumber(r.effective_price_per_litre as string, 2) }) : null,
               },
             ]
           : undefined

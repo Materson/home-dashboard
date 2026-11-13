@@ -199,7 +199,8 @@ export function AISettingsPage() {
           </Text>
           <Stack gap="xs">
             {MODULES.map((m) => (
-              <Group key={m} justify="space-between" wrap="nowrap">
+              // Phones: the choice goes full width under the module's name.
+              <Group key={m} justify="space-between" gap="xs">
                 <Stack gap={0}>
                   <Text size="sm" fw={500}>
                     {t(`assistant.module.${m}`)}
@@ -212,6 +213,7 @@ export function AISettingsPage() {
                 </Stack>
                 <SegmentedControl
                   size="xs"
+                  w={{ base: "100%", sm: "auto" }}
                   value={s.policies[m] ?? "off"}
                   onChange={(v) => save.mutate({ policies: { [m]: v as Policy } })}
                   data={(["off", "local", "cloud"] as Policy[]).map((v) => ({ value: v, label: t(`settings.ai.policy.${v}`) }))}

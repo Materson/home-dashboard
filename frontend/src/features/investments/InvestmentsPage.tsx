@@ -42,6 +42,7 @@ import { useLocalStorage } from "@mantine/hooks";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { ChoiceTabs } from "@/components/ChoiceTabs";
 import { useRangeSelect } from "@/components/useRangeSelect";
 
 import { usePermissions } from "@/features/auth/usePermissions";
@@ -142,6 +143,10 @@ export function InvestmentsPage() {
   const period = p?.period ?? null;
   const periodLabel = period ? `${fmtDate(period.start)} – ${fmtDate(period.end)}` : "";
   const kindsHeld = KINDS.filter((k) => (assets.data ?? []).some((a) => a.kind === k));
+  const kindOptions: { value: AssetKind | "all"; label: string }[] = [
+    { value: "all", label: t("investments.allKinds") },
+    ...kindsHeld.map((k) => ({ value: k, label: t(`investments.kind.${k}`) })),
+  ];
   const shown = (assets.data ?? []).filter(
     (a) => (kind === "all" || a.kind === kind) && (!openOnly || Number(a.quantity) > 0),
   );
@@ -207,13 +212,11 @@ export function InvestmentsPage() {
         </Text>
       )}
       {kindsHeld.length > 1 && (
-        <SegmentedControl
+        <ChoiceTabs
+          label={t("investments.kindFilter")}
           value={kind}
-          onChange={(v) => setKind(v as AssetKind | "all")}
-          data={[
-            { value: "all", label: t("investments.allKinds") },
-            ...kindsHeld.map((k) => ({ value: k, label: t(`investments.kind.${k}`) })),
-          ]}
+          onChange={setKind}
+          data={kindOptions}
           style={{ alignSelf: "flex-start" }}
         />
       )}
@@ -251,8 +254,9 @@ export function InvestmentsPage() {
                   checked={openOnly}
                   onChange={(e) => setOpenOnly(e.currentTarget.checked)}
                 />
-                <SegmentedControl
+                <ChoiceTabs
                   size="xs"
+                  label={t("common.period")}
                   value={range}
                   onChange={setRange}
                   data={RANGES.map((r) => ({ value: r.value, label: t(`investments.range.${r.value}`) }))}
@@ -317,8 +321,9 @@ export function InvestmentsPage() {
           <Table.Thead>
             <Table.Tr>
               <Table.Th>{t("investments.f.name")}</Table.Th>
-              <Table.Th ta="right">{t("investments.held")}</Table.Th>
-              <Table.Th ta="right">{t("investments.cost")}</Table.Th>
+              {/* Phones: kind, quantity and what was paid under the name. */}
+              <Table.Th ta="right" visibleFrom="sm">{t("investments.held")}</Table.Th>
+              <Table.Th ta="right" visibleFrom="sm">{t("investments.cost")}</Table.Th>
               <Table.Th ta="right">{t("investments.value")}</Table.Th>
               <Table.Th ta="right">
                 {period ? (
@@ -336,7 +341,7 @@ export function InvestmentsPage() {
               <Table.Tr key={a.id} onClick={() => setOpenId(a.id)} style={{ cursor: "pointer" }}>
                 <Table.Td>
                   <Group gap="xs" wrap="nowrap">
-                    <Badge size="sm" color={KIND_COLOR[a.kind]} variant="light">
+                    <Badge size="sm" color={KIND_COLOR[a.kind]} variant="light" visibleFrom="sm" style={{ flexShrink: 0 }}>
                       {t(`investments.kind.${a.kind}`)}
                     </Badge>
                     <Text fw={600}>{a.name}</Text>
@@ -346,9 +351,12 @@ export function InvestmentsPage() {
                       </Tooltip>
                     )}
                   </Group>
+                  <Text size="xs" c="dimmed" hiddenFrom="sm">
+                    {t(`investments.kind.${a.kind}`)} · {held(a, t)} · {t("investments.cost")}: {money.fmt(a.cost)}
+                  </Text>
                 </Table.Td>
-                <Table.Td ta="right">{held(a, t)}</Table.Td>
-                <Table.Td ta="right">{money.fmt(a.cost)}</Table.Td>
+                <Table.Td ta="right" visibleFrom="sm">{held(a, t)}</Table.Td>
+                <Table.Td ta="right" visibleFrom="sm">{money.fmt(a.cost)}</Table.Td>
                 <Table.Td ta="right">
                   <Text size="sm" fw={600}>
                     {money.fmt(a.value)}

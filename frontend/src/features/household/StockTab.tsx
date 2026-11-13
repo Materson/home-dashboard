@@ -13,7 +13,6 @@ import {
   Group,
   Paper,
   Popover,
-  SegmentedControl,
   Stack,
   Switch,
   Table,
@@ -26,6 +25,7 @@ import { useDebouncedValue } from "@mantine/hooks";
 import { IconArchive, IconCheck, IconMinus, IconPencil, IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { ChoiceTabs } from "@/components/ChoiceTabs";
 
 import type { Row } from "@/components/records/fields";
 import { RecordFormModal } from "@/components/records/RecordFormModal";
@@ -126,9 +126,10 @@ export function StockTab({ canEdit }: { canEdit: boolean }) {
             onChange={(e) => setSearch(e.currentTarget.value)}
             w={240}
           />
-          <SegmentedControl
+          <ChoiceTabs
+            label={t("household.f.category")}
             value={category}
-            onChange={(v) => setCategory(v as CategoryFilter)}
+            onChange={setCategory}
             data={[
               { value: "all", label: t("household.filter.all") },
               { value: "food", label: t("household.category.food") },

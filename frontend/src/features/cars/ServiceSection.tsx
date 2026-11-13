@@ -13,7 +13,6 @@ import {
   Menu,
   Popover,
   ScrollArea,
-  SegmentedControl,
   Stack,
   Table,
   Text,
@@ -22,6 +21,7 @@ import {
 import { IconChevronDown, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { ChoiceTabs } from "@/components/ChoiceTabs";
 
 import { fmtDate, fmtMoney, fmtNumber } from "@/lib/format";
 
@@ -74,10 +74,11 @@ export function ServiceSection({ carId }: { carId: string }) {
   return (
     <Stack gap="sm">
       <Group justify="space-between">
-        <SegmentedControl
+        <ChoiceTabs
           size="xs"
+          label={t("common.show")}
           value={filter}
-          onChange={(v) => setFilter(v as Filter)}
+          onChange={setFilter}
           data={[
             { value: "all", label: t("cars.svc.filter.all") },
             { value: "service", label: t("cars.svc.filter.service") },
@@ -108,10 +109,11 @@ export function ServiceSection({ carId }: { carId: string }) {
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>{t("cars.f.date")}</Table.Th>
-              <Table.Th>{t("cars.f.kind")}</Table.Th>
+              {/* Phones: date, type and odometer under what was done. */}
+              <Table.Th visibleFrom="sm">{t("cars.f.date")}</Table.Th>
+              <Table.Th visibleFrom="sm">{t("cars.f.kind")}</Table.Th>
               <Table.Th>{t("cars.f.title")}</Table.Th>
-              <Table.Th ta="right">{t("cars.f.odometer")}</Table.Th>
+              <Table.Th ta="right" visibleFrom="sm">{t("cars.f.odometer")}</Table.Th>
               <Table.Th ta="right">{t("cars.f.cost")}</Table.Th>
               <Table.Th />
             </Table.Tr>
@@ -121,14 +123,23 @@ export function ServiceSection({ carId }: { carId: string }) {
               const r = row.record;
               return (
                 <Table.Tr key={`${row.kind}-${r.id}`}>
-                  <Table.Td>{fmtDate(r.date as string)}</Table.Td>
-                  <Table.Td>
+                  <Table.Td visibleFrom="sm">{fmtDate(r.date as string)}</Table.Td>
+                  <Table.Td visibleFrom="sm">
                     <TypeBadge row={row} />
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm">{describe(row, t)}</Text>
+                    <Text size="xs" c="dimmed" hiddenFrom="sm">
+                      {[
+                        fmtDate(r.date as string),
+                        typeLabel(row, t),
+                        r.odometer_km != null ? `${fmtNumber(r.odometer_km as number)} km` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
                   </Table.Td>
-                  <Table.Td ta="right">
+                  <Table.Td ta="right" visibleFrom="sm">
                     {r.odometer_km != null ? `${fmtNumber(r.odometer_km as number)} km` : "—"}
                   </Table.Td>
                   <Table.Td ta="right">
@@ -190,18 +201,18 @@ export function ServiceSection({ carId }: { carId: string }) {
   );
 }
 
+function typeLabel(row: Row, t: (key: string) => string): string {
+  return row.kind === "maintenance"
+    ? t(`cars.maintenanceKind.${row.record.kind as string}`)
+    : t(`cars.svc.kind.${row.kind}`);
+}
+
 function TypeBadge({ row }: { row: Row }) {
   const { t } = useTranslation();
-  if (row.kind === "maintenance") {
-    return (
-      <Badge variant="light" color="gray">
-        {t(`cars.maintenanceKind.${row.record.kind as string}`)}
-      </Badge>
-    );
-  }
+  const color = row.kind === "maintenance" ? "gray" : row.kind === "oil-changes" ? "teal" : "blue";
   return (
-    <Badge variant="light" color={row.kind === "oil-changes" ? "teal" : "blue"}>
-      {t(`cars.svc.kind.${row.kind}`)}
+    <Badge variant="light" color={color}>
+      {typeLabel(row, t)}
     </Badge>
   );
 }

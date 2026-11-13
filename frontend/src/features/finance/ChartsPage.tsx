@@ -23,7 +23,6 @@ import {
   NumberInput,
   Paper,
   ScrollArea,
-  SegmentedControl,
   Stack,
   Table,
   TagsInput,
@@ -35,6 +34,7 @@ import { IconArrowLeft, IconChevronRight, IconFilterOff } from "@tabler/icons-re
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { ChoiceTabs } from "@/components/ChoiceTabs";
 import { useRangeSelect } from "@/components/useRangeSelect";
 
 import { peopleApi } from "@/features/people/api";
@@ -113,6 +113,10 @@ export function ChartsPage() {
 
   // The line: income vs expenses, or lines to compare.
   const [lineMode, setLineMode] = useState<LineMode>("kind");
+  const lineModes = (["kind", "category", "person", "term"] as const).map((v) => ({
+    value: v,
+    label: t(`finance.charts.lines.${v}`),
+  }));
   const noWords = lineMode === "term" && !filters.q.length;
   const line = useQuery({
     queryKey: ["finance", "charts", "line", until, months, f],
@@ -188,9 +192,10 @@ export function ChartsPage() {
         subtitle={t("page.charts.subtitle")}
         actions={
         <>
-          <SegmentedControl
+          <ChoiceTabs
+            label={t("common.period")}
             value={mode}
-            onChange={(v) => setMode(v as PeriodMode)}
+            onChange={setMode}
             data={[
               { value: "month", label: t("finance.charts.month") },
               { value: "year", label: t("finance.charts.year") },
@@ -288,16 +293,13 @@ export function ChartsPage() {
               ? t("finance.charts.trend", { count: months })
               : t("finance.charts.compare", { count: months })}
           </Title>
-          <SegmentedControl
+          <ChoiceTabs
             size="xs"
+            label={t("finance.charts.lines.label")}
             value={lineMode}
-            onChange={(v) => setLineMode(v as LineMode)}
-            data={[
-              { value: "kind", label: t("finance.charts.lines.kind") },
-              { value: "category", label: t("finance.charts.lines.category") },
-              { value: "person", label: t("finance.charts.lines.person") },
-              { value: "term", label: t("finance.charts.lines.term") },
-            ]}
+            onChange={setLineMode}
+            data={lineModes}
+            selectWidth="100%"
           />
         </Group>
         {lineMode === "kind" ? (

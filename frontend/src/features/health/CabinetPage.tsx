@@ -15,7 +15,6 @@ import {
   Group,
   Paper,
   Popover,
-  SegmentedControl,
   Stack,
   Switch,
   Table,
@@ -29,6 +28,7 @@ import { IconCheck, IconLockOpen, IconPencil, IconPlus, IconSearch, IconTrash } 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { ChoiceTabs } from "@/components/ChoiceTabs";
 
 import { RecordFormModal } from "@/components/records/RecordFormModal";
 import type { Row } from "@/components/records/fields";
@@ -111,9 +111,10 @@ export function CabinetPage() {
           onChange={(e) => setSearch(e.currentTarget.value)}
           w={320}
         />
-        <SegmentedControl
+        <ChoiceTabs
+          label={t("cabinet.f.forWhom")}
           value={forWhom}
-          onChange={(v) => setForWhom(v as FilterWho)}
+          onChange={setForWhom}
           data={[
             { value: "all", label: t("cabinet.filter.all") },
             { value: "children", label: t("cabinet.filter.children") },
@@ -132,8 +133,9 @@ export function CabinetPage() {
           <Table.Thead>
             <Table.Tr>
               <Table.Th>{t("cabinet.f.name")}</Table.Th>
-              <Table.Th>{t("cabinet.f.indications")}</Table.Th>
-              <Table.Th>{t("cabinet.f.forWhom")}</Table.Th>
+              {/* Phones: what it's for and who may take it under the name. */}
+              <Table.Th visibleFrom="sm">{t("cabinet.f.indications")}</Table.Th>
+              <Table.Th visibleFrom="sm">{t("cabinet.f.forWhom")}</Table.Th>
               <Table.Th>{t("cabinet.boxes")}</Table.Th>
               <Table.Th />
             </Table.Tr>
@@ -146,13 +148,21 @@ export function CabinetPage() {
                   <Text size="xs" c="dimmed">
                     {[item.substance, t(`cabinet.form.${item.form}`)].filter(Boolean).join(" · ")}
                   </Text>
+                  <Stack gap={4} mt={4} hiddenFrom="sm" align="flex-start">
+                    {item.indications && (
+                      <Text size="xs" c="dimmed" lineClamp={2}>
+                        {item.indications}
+                      </Text>
+                    )}
+                    <WhoBadge item={item} />
+                  </Stack>
                 </Table.Td>
-                <Table.Td maw={320}>
+                <Table.Td maw={320} visibleFrom="sm">
                   <Text size="sm" lineClamp={2}>
                     {item.indications || "—"}
                   </Text>
                 </Table.Td>
-                <Table.Td>
+                <Table.Td visibleFrom="sm">
                   <WhoBadge item={item} />
                 </Table.Td>
                 <Table.Td>

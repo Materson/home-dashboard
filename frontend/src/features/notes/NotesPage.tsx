@@ -14,7 +14,6 @@ import {
   Group,
   Paper,
   Popover,
-  SegmentedControl,
   SimpleGrid,
   Stack,
   Switch,
@@ -41,6 +40,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { ChoiceTabs } from "@/components/ChoiceTabs";
 
 import { useSearchParams } from "react-router-dom";
 
@@ -114,9 +114,10 @@ export function NotesPage() {
 
       <Group justify="space-between">
         <Group>
-          <SegmentedControl
+          <ChoiceTabs
+            label={t("common.show")}
             value={scope}
-            onChange={(v) => setScope(v as Scope)}
+            onChange={setScope}
             data={[
               { value: "all", label: t("notes.scope.all") },
               { value: "mine", label: t("notes.scope.mine") },

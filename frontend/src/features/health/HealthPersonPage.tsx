@@ -10,6 +10,7 @@ import {
   ActionIcon,
   Badge,
   Paper,
+  Select,
   Stack,
   Tabs,
   Text,
@@ -51,6 +52,7 @@ export function HealthPersonPage() {
   const forms = useHealthForms(personId);
   const [event, setEvent] = useState<Row | null>(null);
   const [filesFor, setFilesFor] = useState<{ id: string; title: string } | null>(null);
+  const [tab, setTab] = useState<HealthKind>("conditions");
   const name = forms.people.find((p) => p.id === personId)?.display_name ?? "";
 
   const list = (kind: HealthKind) => (
@@ -112,8 +114,17 @@ export function HealthPersonPage() {
       <DosesCard personId={personId} />
 
       <Paper withBorder p="md">
-        <Tabs defaultValue="conditions" keepMounted={false}>
-          <Tabs.List>
+        <Tabs value={tab} onChange={(v) => v && setTab(v as HealthKind)} keepMounted={false}>
+          {/* Phones: a dropdown — six tabs don't fit a row. */}
+          <Select
+            hiddenFrom="sm"
+            aria-label={t("common.section")}
+            value={tab}
+            onChange={(v) => v && setTab(v as HealthKind)}
+            data={HEALTH_TABS.map((h) => ({ value: h.kind, label: t(h.labelKey) }))}
+            allowDeselect={false}
+          />
+          <Tabs.List visibleFrom="sm">
             {HEALTH_TABS.map((tab) => (
               <Tabs.Tab key={tab.kind} value={tab.kind}>
                 {t(tab.labelKey)}
