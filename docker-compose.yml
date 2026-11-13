@@ -51,7 +51,16 @@ services:
 
   backend:
     <<: *backend-base
-    command: ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    # Brings the database up to date (and the default roles) before serving,
+    # so a fresh install needs no shell: open the app and run first setup.
+    command:
+      - sh
+      - -c
+      - >-
+        python manage.py migrate --noinput &&
+        python manage.py seed_roles &&
+        exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000
+        --proxy-headers --forwarded-allow-ips '*'
     expose: ["8000"]
 
   worker:
