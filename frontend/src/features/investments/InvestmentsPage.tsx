@@ -42,9 +42,10 @@ import { useLocalStorage } from "@mantine/hooks";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { useRangeSelect } from "@/components/useRangeSelect";
 
 import { usePermissions } from "@/features/auth/usePermissions";
-import { fmtDate, fmtMoney, fmtNumber, fmtQty, isoDate } from "@/lib/format";
+import { fmtDate, fmtMoney, fmtNumber, fmtQty, isoDate, parseIsoDate } from "@/lib/format";
 
 import {
   type Asset,
@@ -274,7 +275,16 @@ export function InvestmentsPage() {
                 )}
               </Group>
             </Group>
-            <ValueChart points={p?.series ?? []} />
+            <ValueChart
+              points={p?.series ?? []}
+              // Dragging across the chart picks those dates as the range.
+              onSelect={(from, to) => {
+                const span: [Date, Date] = [parseIsoDate(from), parseIsoDate(to)];
+                setPicking(span);
+                setDates(span);
+                setRange("range");
+              }}
+            />
           </Paper>
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 4 }}>
@@ -414,10 +424,17 @@ export function valueDomain(points: Point[]): [number, number] {
   return [Math.floor(Math.max(0, lo - pad)), Math.ceil(hi + pad)];
 }
 
-function ValueChart({ points: pln }: { points: Point[] }) {
+/** Value vs cost; with ``onSelect`` dragging across it picks a span of its
+ *  dates (first and last, "YYYY-MM-DD"). */
+function ValueChart({ points: pln, onSelect }: { points: Point[]; onSelect?: (from: string, to: string) => void }) {
   const { t } = useTranslation();
   const money = useMoney();
   const points = pln.map((p) => ({ ...p, value: String(money.conv(p.value)), cost: String(money.conv(p.cost)) }));
+  const data = chartData(points);
+  const drag = useRangeSelect(
+    data.map((d) => d.date),
+    onSelect && ((i, j) => onSelect(points[i].date, points[j].date)),
+  );
   if (!points.length) {
     return (
       <Text size="sm" c="dimmed">
@@ -426,11 +443,13 @@ function ValueChart({ points: pln }: { points: Point[] }) {
     );
   }
   return (
+    <>
     <LineChart
       h={260}
-      data={chartData(points)}
+      data={data}
       yAxisProps={{ domain: valueDomain(points), tickFormatter: (v: number) => fmtQty(String(Math.round(v))) }}
       dataKey="date"
+      {...drag.chartProps}
       withLegend
       withDots={false}
       curveType="linear"
@@ -439,7 +458,38 @@ function ValueChart({ points: pln }: { points: Point[] }) {
         { name: "value", label: t("investments.value"), color: "indigo.6" },
         { name: "cost", label: t("investments.cost"), color: "gray.5", strokeDasharray: "5 5" },
       ]}
-    />
+    >
+      {drag.area}
+    </LineChart>
+    {onSelect && points.length > 1 && (
+      <Text size="xs" c="dimmed" mt="xs">
+        {t("investments.dragHint")}
+      </Text>
+    )}
+    </>
+  );
+}
+
+/** An asset's whole history; dragging across it zooms in, a button shows
+ *  all of it again. */
+function AssetChart({ points }: { points: Point[] }) {
+  const { t } = useTranslation();
+  const [zoom, setZoom] = useState<{ from: string; to: string } | null>(null);
+  const shown = zoom ? points.filter((p) => p.date >= zoom.from && p.date <= zoom.to) : points;
+  return (
+    <div>
+      {zoom && (
+        <Group justify="space-between" mb={4}>
+          <Text size="xs" c="dimmed">
+            {fmtDate(zoom.from)} – {fmtDate(zoom.to)}
+          </Text>
+          <Button size="compact-xs" variant="subtle" onClick={() => setZoom(null)}>
+            {t("investments.wholeHistory")}
+          </Button>
+        </Group>
+      )}
+      <ValueChart points={shown} onSelect={(from, to) => setZoom({ from, to })} />
+    </div>
   );
 }
 
@@ -501,7 +551,7 @@ function AssetDrawer(props: { asset: Asset | null; canEdit: boolean; onClose: ()
               {t("investments.realized", { amount: money.fmt(a.realized) })}
             </Text>
           )}
-          <ValueChart points={series.data ?? []} />
+          <AssetChart key={a.id} points={series.data ?? []} />
           {a.kind === "crypto" && (
             <Text size="xs" c="dimmed">
               {t("investments.cryptoHistoryNote")}

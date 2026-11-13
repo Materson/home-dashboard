@@ -707,6 +707,8 @@
   "investments.held": "Held",
   "investments.empty": "No investments yet.",
   "investments.noHistory": "No history.",
+  "investments.dragHint": "Drag across the chart to pick a period.",
+  "investments.wholeHistory": "Whole history",
   "investments.estimated": "estimate",
   "investments.bondsCount_one": "{{count}} bond",
   "investments.bondsCount_other": "{{count}} bonds",

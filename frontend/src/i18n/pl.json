@@ -717,6 +717,8 @@
   "investments.held": "Ilość",
   "investments.empty": "Nie dodano jeszcze inwestycji.",
   "investments.noHistory": "Brak historii.",
+  "investments.dragHint": "Przeciągnij po wykresie, aby wybrać okres.",
+  "investments.wholeHistory": "Cała historia",
   "investments.estimated": "szacunek",
   "investments.bondsCount_one": "{{count}} obligacja",
   "investments.bondsCount_few": "{{count}} obligacje",
