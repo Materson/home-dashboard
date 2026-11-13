@@ -28,7 +28,6 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/stats.html
-frontend/src/api/schema.ts
 *.tsbuildinfo
 
 # docker / local runtime
