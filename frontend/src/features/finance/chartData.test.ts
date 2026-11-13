@@ -97,7 +97,8 @@ describe("repeatKind", () => {
 });
 
 describe("investment chart axis", () => {
-  it("hugs the data so small growth is visible", async () => {
+  // Imports the whole investments page: the first import can be slow.
+  it("hugs the data so small growth is visible", { timeout: 20_000 }, async () => {
     const { valueDomain } = await import("@/features/investments/InvestmentsPage");
     const [lo, hi] = valueDomain([
       { date: "2026-01-01", value: "10000", cost: "10000" },
