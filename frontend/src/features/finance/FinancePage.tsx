@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActionIcon,
   Avatar,
   Alert,
   Badge,
   Button,
+  Checkbox,
   Group,
   MultiSelect,
   NumberInput,
@@ -15,19 +16,23 @@ import {
   TextInput,
   Tooltip,
 } from "@mantine/core";
-import { MonthPickerInput } from "@mantine/dates";
+import { DatePickerInput, MonthPickerInput } from "@mantine/dates";
 import { notifications } from "@mantine/notifications";
 import {
+  IconAdjustmentsHorizontal,
   IconBookmarkPlus,
   IconCopy,
+  IconFileImport,
+  IconFilterOff,
   IconPencil,
   IconPlus,
   IconRepeat,
   IconTrash,
 } from "@tabler/icons-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { fmtDate, fmtMonth } from "@/lib/format";
 
 import {
   financeApi,
@@ -41,28 +46,45 @@ import { renderCategoryOption } from "./CategoryOption";
 import { peopleApi } from "@/features/people/api";
 
 import { BookmarksBar } from "./BookmarksBar";
+import { BulkEditModal } from "./BulkEditModal";
+import { ImportModal } from "./ImportModal";
 import { RecurringModal } from "./RecurringModal";
 import { MonthlyChart } from "./MonthlyChart";
 import { TransactionModal, type TxModalMode, type TxModalSource } from "./TransactionModal";
 
 /**
- * Finance page — month-scoped list of transactions with per-month totals,
- * monthly chart, and add / edit / duplicate controls. The default month is
- * the current one; use the month picker at the top to move through history.
+ * Finance page — list of transactions with their totals, monthly chart, and
+ * add / edit / duplicate controls. Without filters the list shows the month
+ * picked at the top (the current one by default); a search (text, amount,
+ * category, person) looks through every month, and the date-range filter
+ * narrows the list to those days.
  */
 export function FinancePage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
 
   const [month, setMonth] = useState<Date>(() => firstOfMonth(new Date()));
-  const [search, setSearch] = useState<{
-    q: string;
-    amount_min: string | undefined;
-    amount_max: string | undefined;
-    category_ids: string[];
-    person_ids: string[];
-  }>({ q: "", amount_min: undefined, amount_max: undefined, category_ids: [], person_ids: [] });
+  const [search, setSearch] = useState<Search>(NO_SEARCH);
+  // The range being picked, and the one applied (once both days are picked).
+  const [picking, setPicking] = useState<[Date | null, Date | null]>([null, null]);
+  const [range, setRange] = useState<[Date, Date] | null>(null);
+  const searching = !!(
+    search.q.trim() ||
+    search.amount_min ||
+    search.amount_max ||
+    search.category_ids.length ||
+    search.person_ids.length
+  );
+  function clearFilters() {
+    setSearch(NO_SEARCH);
+    setPicking([null, null]);
+    setRange(null);
+  }
   const [recurringOpen, setRecurringOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  // Rows ticked for "change many" (cleared when the filters change).
+  const [ticked, setTicked] = useState<string[]>([]);
   const people = useQuery({ queryKey: ["people"], queryFn: () => peopleApi.list() });
   const peopleById = useMemo(
     () => Object.fromEntries((people.data ?? []).map((p) => [p.id, p])),
@@ -84,26 +106,44 @@ export function FinancePage() {
   }, [categoriesQ.data]);
 
   const filters: TransactionFilters = useMemo(() => {
-    const { date_from, date_to } = monthRange(month);
+    // The picked days; else every month when searching; else the month.
+    const period = range
+      ? { date_from: iso(range[0]), date_to: iso(range[1]) }
+      : searching
+        ? {}
+        : monthRange(month);
     const category_keys = search.category_ids
       .map((id) => categoriesById[id]?.key)
       .filter((k): k is string => !!k);
     return {
-      date_from,
-      date_to,
-      limit: 500,
-      q: search.q || undefined,
+      ...period,
+      q: search.q.trim() || undefined,
       amount_min: search.amount_min,
       amount_max: search.amount_max,
       category_keys: category_keys.length ? category_keys : undefined,
       person_ids: search.person_ids.length ? search.person_ids : undefined,
     };
-  }, [month, search, categoriesById]);
+  }, [month, search, searching, range, categoriesById]);
+  const scopeLabel = range
+    ? `${fmtDate(iso(range[0]))} – ${fmtDate(iso(range[1]))}`
+    : searching
+      ? t("finance.search.allMonths")
+      : fmtMonth(month);
 
+  // The newest PAGE rows; "show older" adds another PAGE (for these filters).
+  const filtersKey = JSON.stringify(filters);
+  const [older, setOlder] = useState<{ key: string; limit: number } | null>(null);
+  const limit = older?.key === filtersKey ? older.limit : PAGE;
   const transactionsQ = useQuery({
-    queryKey: ["finance", "transactions", filters],
-    queryFn: () => financeApi.listTransactions(filters),
+    queryKey: ["finance", "transactions", filters, limit],
+    queryFn: () => financeApi.listTransactions({ ...filters, limit }),
+    placeholderData: keepPreviousData,
   });
+  const hasOlder = (transactionsQ.data?.length ?? 0) >= limit;
+  useEffect(() => setTicked([]), [filters]);
+  const shownIds = (transactionsQ.data ?? []).map((tx) => tx.id);
+  const allTicked = shownIds.length > 0 && shownIds.every((id) => ticked.includes(id));
+  const toggle = (id: string) => setTicked((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
   // The chart shows the 12 months ending with the picked month, so the month
   // must be part of the query key or the cached window never changes.
   const monthIso = iso(month);
@@ -183,17 +223,9 @@ export function FinancePage() {
             valueFormat="MMMM YYYY"
             w={200}
           />
-          <Badge color="teal" size="lg">
-            {t("finance.totals.income", { value: monthTotals.income.toFixed(2) })}
-          </Badge>
-          <Badge color="red" size="lg">
-            {t("finance.totals.expense", { value: monthTotals.expense.toFixed(2) })}
-          </Badge>
-          <Badge color="gray" size="lg">
-            {t("finance.totals.net", {
-              value: (monthTotals.income - monthTotals.expense).toFixed(2),
-            })}
-          </Badge>
+          <Button variant="light" leftSection={<IconFileImport size={16} />} onClick={() => setImportOpen(true)}>
+            {t("finance.import.button")}
+          </Button>
           <Button variant="light" leftSection={<IconRepeat size={16} />} onClick={() => setRecurringOpen(true)}>
             {t("finance.recurring.title")}
           </Button>
@@ -220,16 +252,31 @@ export function FinancePage() {
             onChange={(e) => setSearch({ ...search, q: e.currentTarget.value })}
             w={240}
           />
+          <DatePickerInput
+            type="range"
+            allowSingleDateInRange
+            clearable
+            valueFormat="DD.MM.YYYY"
+            placeholder={t("finance.search.dates")}
+            aria-label={t("finance.search.dates")}
+            value={picking}
+            onChange={(v) => {
+              setPicking(v);
+              if (v[0] && v[1]) setRange([v[0], v[1]]);
+              else if (!v[0] && !v[1]) setRange(null);
+            }}
+            w={230}
+          />
           <NumberInput
             placeholder={t("finance.search.min")}
-            value={search.amount_min ? Number(search.amount_min) : undefined}
+            value={search.amount_min ? Number(search.amount_min) : ""}
             onChange={(v) => setSearch({ ...search, amount_min: v ? String(v) : undefined })}
             w={120}
             min={0}
           />
           <NumberInput
             placeholder={t("finance.search.max")}
-            value={search.amount_max ? Number(search.amount_max) : undefined}
+            value={search.amount_max ? Number(search.amount_max) : ""}
             onChange={(v) => setSearch({ ...search, amount_max: v ? String(v) : undefined })}
             w={120}
             min={0}
@@ -256,11 +303,56 @@ export function FinancePage() {
             clearable
             w={220}
           />
+          {(searching || range) && (
+            <Button variant="subtle" color="gray" leftSection={<IconFilterOff size={16} />} onClick={clearFilters}>
+              {t("finance.search.clear")}
+            </Button>
+          )}
+          <Button
+            variant="light"
+            leftSection={<IconAdjustmentsHorizontal size={16} />}
+            onClick={() => setBulkOpen(true)}
+            ml="auto"
+          >
+            {ticked.length ? t("finance.bulk.buttonTicked", { count: ticked.length }) : t("finance.bulk.button")}
+          </Button>
+        </Group>
+
+        {/* What the list holds, and its totals. */}
+        <Group gap="xs" mb="sm">
+          <Text fw={600}>
+            {scopeLabel}
+          </Text>
+          <Badge color="teal" variant="light">
+            {t("finance.totals.income", { value: monthTotals.income.toFixed(2) })}
+          </Badge>
+          <Badge color="red" variant="light">
+            {t("finance.totals.expense", { value: monthTotals.expense.toFixed(2) })}
+          </Badge>
+          <Badge color="gray" variant="light">
+            {t("finance.totals.net", {
+              value: (monthTotals.income - monthTotals.expense).toFixed(2),
+            })}
+          </Badge>
+          {hasOlder && (
+            <Text size="xs" c="dimmed">
+              {t("finance.totals.partial", { count: limit })}
+            </Text>
+          )}
         </Group>
 
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>
+              <Table.Th w={36}>
+                <Checkbox
+                  size="xs"
+                  aria-label={t("finance.bulk.tickAll")}
+                  checked={allTicked}
+                  indeterminate={ticked.length > 0 && !allTicked}
+                  onChange={() => setTicked(allTicked ? [] : shownIds)}
+                />
+              </Table.Th>
               <Table.Th>{t("finance.field.date")}</Table.Th>
               <Table.Th>{t("finance.field.name")}</Table.Th>
               <Table.Th>{t("finance.field.category")}</Table.Th>
@@ -273,7 +365,10 @@ export function FinancePage() {
             {(transactionsQ.data ?? []).map((tx: Transaction) => {
               const cat = categoriesById[tx.category_id];
               return (
-                <Table.Tr key={tx.id}>
+                <Table.Tr key={tx.id} bg={ticked.includes(tx.id) ? "var(--mantine-primary-color-light)" : undefined}>
+                  <Table.Td>
+                    <Checkbox size="xs" aria-label={tx.name} checked={ticked.includes(tx.id)} onChange={() => toggle(tx.id)} />
+                  </Table.Td>
                   <Table.Td>{tx.date}</Table.Td>
                   <Table.Td>
                     <Group gap={4} wrap="nowrap">
@@ -341,15 +436,42 @@ export function FinancePage() {
             })}
             {!transactionsQ.isLoading && !(transactionsQ.data ?? []).length && (
               <Table.Tr>
-                <Table.Td colSpan={6} ta="center" c="dimmed" py="md">
-                  {t("finance.tx.empty")}
+                <Table.Td colSpan={7} ta="center" c="dimmed" py="md">
+                  {searching || range ? t("finance.tx.noMatch") : t("finance.tx.empty")}
                 </Table.Td>
               </Table.Tr>
             )}
           </Table.Tbody>
         </Table>
+        {hasOlder && (
+          <Group justify="center" mt="sm">
+            <Button
+              variant="subtle"
+              loading={transactionsQ.isFetching}
+              onClick={() => setOlder({ key: filtersKey, limit: limit + PAGE })}
+            >
+              {t("finance.tx.older")}
+            </Button>
+          </Group>
+        )}
       </Paper>
 
+      <BulkEditModal
+        opened={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        filters={filters}
+        scope={scopeLabel}
+        ids={ticked}
+        categories={categoriesQ.data ?? []}
+        people={people.data ?? []}
+        onDone={() => setTicked([])}
+      />
+      <ImportModal
+        opened={importOpen}
+        onClose={() => setImportOpen(false)}
+        categories={categoriesQ.data ?? []}
+        people={people.data ?? []}
+      />
       <RecurringModal
         opened={recurringOpen}
         onClose={() => setRecurringOpen(false)}
@@ -370,6 +492,16 @@ export function FinancePage() {
 // ---- helpers ----
 
 const CHART_MONTHS = 12;
+const PAGE = 500; // rows per "show older"
+
+type Search = {
+  q: string;
+  amount_min: string | undefined;
+  amount_max: string | undefined;
+  category_ids: string[];
+  person_ids: string[];
+};
+const NO_SEARCH: Search = { q: "", amount_min: undefined, amount_max: undefined, category_ids: [], person_ids: [] };
 
 function firstOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1);

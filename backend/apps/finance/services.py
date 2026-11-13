@@ -22,7 +22,7 @@ from .models import (
     TransactionBookmark,
     TransactionShare,
 )
-from .selectors import list_debt_entries
+from .selectors import TransactionFilter, find_category, list_debt_entries, list_transactions
 
 if TYPE_CHECKING:
     from apps.access.context import AccessContext
@@ -557,3 +557,154 @@ def check_related(kind: str, related_id: UUID | None) -> None:
         resolve_subject(kind, related_id)
     except AttachmentError as exc:
         raise ValueError(f"unknown related record {kind}") from exc
+
+
+# -------------------- Many at once --------------------
+
+
+@atomic
+def bulk_update_transactions(
+    ctx: AccessContext,
+    f: TransactionFilter,
+    *,
+    ids: list[UUID] | None = None,
+    person: str = "keep",
+    person_id: UUID | None = None,
+    category_id: UUID | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Set who and/or which category on every transaction the filter finds
+    (of them only ``ids``, when given). ``person``: "keep", "household" (no
+    one) or "person" (``person_id`` — replacing a split between people). A
+    category only goes to transactions of its kind (income / expense); the
+    others keep theirs and are counted in ``wrong_kind``. ``dry_run`` only
+    counts."""
+    from apps.people.models import Person  # noqa: PLC0415
+
+    ctx.require("finance", "edit")
+    if person not in ("keep", "household", "person"):
+        raise ValueError("person must be keep, household or person")
+    if person == "person" and not Person.objects.filter(pk=person_id).exists():
+        raise ValueError("unknown person")
+    category = Category.objects.filter(pk=category_id).first() if category_id else None
+    if category_id and (category is None or category.kind not in CATEGORY_KINDS):
+        raise ValueError("unknown category")
+    qs = list_transactions(ctx, f).prefetch_related("shares")
+    if ids is not None:
+        qs = qs.filter(pk__in=ids)
+    who = str(person_id) if person == "person" else None
+    matched = changed = wrong_kind = 0
+    for tx in qs:
+        matched += 1
+        dirty = False
+        if category and tx.category_id != category.id:
+            if tx.category.kind == category.kind:
+                dirty = True
+                if not dry_run:
+                    tx.category = category
+                    tx.save(update_fields=["category", "updated_at"])
+            else:
+                wrong_kind += 1
+        if person != "keep":
+            wanted = {(who, tx.amount)} if who else set()
+            if {(str(s.person_id), s.amount) for s in tx.shares.all()} != wanted:
+                dirty = True
+                if not dry_run:
+                    save_shares(tx, [(person_id, tx.amount)] if who else [])
+        changed += dirty
+    return {"matched": matched, "changed": changed, "wrong_kind": wrong_kind}
+
+
+# -------------------- Import --------------------
+
+# Colours for main categories an import creates (sub-categories take their main's).
+IMPORT_COLORS = (
+    "#4c6ef5",
+    "#12b886",
+    "#fab005",
+    "#fa5252",
+    "#7950f2",
+    "#15aabf",
+    "#fd7e14",
+    "#e64980",
+    "#40c057",
+    "#228be6",
+)
+NO_CATEGORY = "Inne"
+
+
+@atomic
+def import_transactions(
+    ctx: AccessContext,
+    rows: list[dict[str, Any]],
+    *,
+    mapping: list[dict[str, Any]] | None = None,
+    person_id: UUID | None = None,
+) -> dict[str, int]:
+    """Save rows read by ``importer.parse`` (and checked in the preview).
+    Each row's "main > sub" category is the one ``mapping`` points it at,
+    else the one of that name — created when missing (sub-categories too).
+    The description (Opis) is the name, the note (Notatka) goes to the
+    notes, with an amount in another currency."""
+    from apps.people.models import Person  # noqa: PLC0415
+
+    from .importer import name_and_note  # noqa: PLC0415
+
+    ctx.require("finance", "edit")
+    if person_id and not Person.objects.filter(pk=person_id).exists():
+        raise ValueError("unknown person")
+    targets = {
+        (m["kind"], m["category"] or NO_CATEGORY, m.get("subcategory") or ""): m.get("target_id")
+        for m in mapping or []
+    }
+    resolved: dict[tuple[str, str, str], Category] = {}
+    created = 0
+
+    def find_or_create(kind: str, name: str, parent: Category | None = None) -> Category:
+        nonlocal created
+        found = find_category(kind, parent.name if parent else name, name if parent else "")
+        if found:
+            return found
+        created += 1
+        color = "" if parent else IMPORT_COLORS[created % len(IMPORT_COLORS)]
+        return create_category(
+            ctx, name=name, kind=kind, color=color, parent_id=parent.id if parent else None
+        )
+
+    def category_for(kind: str, main: str, sub: str) -> Category:
+        key = (kind, main, sub)
+        if key not in resolved:
+            target = targets.get(key)
+            if target:
+                cat = Category.objects.filter(pk=target).first()
+                if cat is None or cat.kind != kind:
+                    raise ValueError(f"the category chosen for {main} is not an {kind} one")
+            else:
+                cat = find_or_create(kind, main)
+                if sub:
+                    cat = find_or_create(kind, sub, cat)
+            resolved[key] = cat
+        return resolved[key]
+
+    for r in rows:
+        if r["kind"] not in CATEGORY_KINDS or r["amount"] <= 0:
+            raise ValueError(f"line {r.get('line')}: an income or expense of more than 0")
+        cat = category_for(r["kind"], r["category"] or NO_CATEGORY, r.get("subcategory") or "")
+        name, note = name_and_note(r.get("description", ""), r.get("note", ""))
+        name = " ".join((name or r.get("subcategory") or cat.name).split())[:200]
+        extra = [note]
+        if r.get("original"):
+            extra.append(f"Kwota oryginalna: {r['original']}")
+        create_transaction(
+            ctx,
+            {
+                "date": r["date"],
+                "amount": r["amount"],
+                "currency": r.get("currency") or "PLN",
+                "category_id": cat.id,
+                "person_id": person_id,
+                "name": name,
+                "notes": "\n".join(x for x in extra if x),
+            },
+        )
+    return {"created": len(rows), "categories": created}

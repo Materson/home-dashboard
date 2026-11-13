@@ -30,6 +30,12 @@ export function fmtDate(value: string | null | undefined): string {
   return new Date(y, m - 1, d).toLocaleDateString(i18n.language);
 }
 
+/** A month as a heading: "Listopad 2026" / "November 2026". */
+export function fmtMonth(d: Date): string {
+  const s = d.toLocaleDateString(i18n.language, { month: "long", year: "numeric" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 /** Local Date → API "YYYY-MM-DD" (no UTC shift, unlike toISOString). */
 export function isoDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");

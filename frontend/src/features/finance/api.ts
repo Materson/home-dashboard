@@ -89,6 +89,54 @@ export type TransactionFilters = {
   offset?: number;
 };
 
+/** Change who / the category on what the filters find (of it only ``ids``). */
+export type BulkChange = {
+  filters: TransactionFilters;
+  ids?: string[];
+  person: "keep" | "household" | "person";
+  person_id?: string | null;
+  category_id?: string | null;
+  /** Only count. */
+  dry_run: boolean;
+};
+/** ``wrong_kind``: kept their category (an income one for expenses, or back). */
+export type BulkResult = { matched: number; changed: number; wrong_kind: number };
+
+export type ImportRow = {
+  line: number;
+  date: string;
+  kind: "expense" | "income";
+  amount: string;
+  currency: string;
+  category: string;
+  subcategory: string;
+  note: string;
+  /** Opis: the transaction's name (Notatka, ``note``, goes to its notes). */
+  description: string;
+  /** "10.00 EUR" when the export converted it to PLN. */
+  original: string;
+  /** That day, amount, kind and name is already here. */
+  duplicate: boolean;
+};
+/** A category path in the file and the existing category it matches (null: created). */
+export type ImportCategory = {
+  kind: "expense" | "income";
+  category: string;
+  subcategory: string;
+  count: number;
+  match_id: string | null;
+};
+export type ImportPreview = {
+  rows: ImportRow[];
+  categories: ImportCategory[];
+  skipped: { line: number; reason: "date" | "amount" | "type" | "transfer" | "zero"; text: string }[];
+};
+export type ImportRequest = {
+  rows: ImportRow[];
+  categories: { kind: "expense" | "income"; category: string; subcategory: string; target_id: string | null }[];
+  person_id: string | null;
+};
+
 export type MonthlyTotal = {
   year_month: string;        // YYYY-MM
   kind: "expense" | "income" | "transfer";
@@ -183,7 +231,10 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  // JSON unless it's a file upload (the browser sets the multipart boundary).
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   if (unsafe) headers.set("X-CSRFToken", csrf());
   const resp = await fetch("/api/finance" + path, { ...init, headers, credentials: "include" });
   if (!resp.ok) {
@@ -203,7 +254,7 @@ async function callNoContent(path: string, init: RequestInit = {}): Promise<void
   if (!resp.ok) throw new Error(`${init.method ?? "GET"} ${path} failed: ${resp.status}`);
 }
 
-function qs(f: TransactionFilters): string {
+function qs(f: object): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(f)) {
     if (v === undefined || v === null || v === "") continue;
@@ -226,6 +277,15 @@ export const financeApi = {
   deleteCategory: (id: string) => call<{ deleted: boolean }>(`/categories/${id}`, { method: "DELETE" }),
   listTransactions: (f: TransactionFilters = {}) =>
     call<Transaction[]>(`/transactions${qs(f)}`),
+  bulkUpdate: (body: BulkChange) =>
+    call<BulkResult>("/transactions/bulk", { method: "POST", body: JSON.stringify(body) }),
+  importPreview: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return call<ImportPreview>("/import/preview", { method: "POST", body });
+  },
+  importRows: (body: ImportRequest) =>
+    call<{ created: number; categories: number }>("/import", { method: "POST", body: JSON.stringify(body) }),
   createTransaction: (body: TransactionInput) =>
     call<Transaction>("/transactions", { method: "POST", body: JSON.stringify(body) }),
   updateTransaction: (id: string, body: TransactionInput & { update_future?: boolean }) =>

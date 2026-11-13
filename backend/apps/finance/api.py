@@ -7,11 +7,12 @@ from uuid import UUID
 
 from django.http import HttpRequest
 from django.shortcuts import get_object_or_404
-from ninja import Query, Router, Schema
+from ninja import File, Query, Router, Schema
+from ninja.files import UploadedFile
 
 from apps.access.context import get_ctx
 
-from . import selectors, services
+from . import importer, selectors, services
 from .loans import schedule as loan_schedule
 from .models import (
     Category,
@@ -270,20 +271,139 @@ def delete_category(request: HttpRequest, category_id: UUID):
 # -------------------- Transactions --------------------
 
 
+def _filter(s: TransactionSearch) -> selectors.TransactionFilter:
+    return selectors.TransactionFilter(
+        q=s.q,
+        date_from=s.date_from,
+        date_to=s.date_to,
+        amount_min=s.amount_min,
+        amount_max=s.amount_max,
+        category_keys=s.category_keys,
+        person_ids=s.person_ids,
+        kind=s.kind,
+    )
+
+
 @router.get("/transactions", response=list[TransactionOut])
 def list_transactions(request: HttpRequest, filters: Query[TransactionSearch]) -> list[Transaction]:
-    f = selectors.TransactionFilter(
-        q=filters.q,
-        date_from=filters.date_from,
-        date_to=filters.date_to,
-        amount_min=filters.amount_min,
-        amount_max=filters.amount_max,
-        category_keys=filters.category_keys,
-        person_ids=filters.person_ids,
-        kind=filters.kind,
-    )
-    qs = selectors.list_transactions(get_ctx(request), f)
+    qs = selectors.list_transactions(get_ctx(request), _filter(filters))
     return list(qs[filters.offset : filters.offset + filters.limit])
+
+
+class BulkIn(Schema):
+    filters: TransactionSearch  # as on the list (limit / offset ignored)
+    ids: list[UUID] | None = None  # only these of what the filters find
+    person: Literal["keep", "household", "person"] = "keep"
+    person_id: UUID | None = None
+    category_id: UUID | None = None  # None: keep
+    dry_run: bool = False  # only count
+
+
+class BulkOut(Schema):
+    matched: int
+    changed: int
+    wrong_kind: int  # kept their category: it's for income, they're expenses (or back)
+
+
+@router.post("/transactions/bulk", response={200: BulkOut, 422: dict})
+def bulk_update(request: HttpRequest, payload: BulkIn):
+    """Set who and/or the category on many transactions at once."""
+    try:
+        return services.bulk_update_transactions(
+            get_ctx(request),
+            _filter(payload.filters),
+            ids=payload.ids,
+            person=payload.person,
+            person_id=payload.person_id,
+            category_id=payload.category_id,
+            dry_run=payload.dry_run,
+        )
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+# -------------------- Import --------------------
+
+
+class ImportRowIn(Schema):
+    line: int = 0
+    date: date
+    kind: Literal["expense", "income"]
+    amount: Decimal
+    currency: str = "PLN"
+    category: str = ""
+    subcategory: str = ""
+    note: str = ""
+    description: str = ""
+    original: str = ""  # "10.00 EUR" when the amount was converted
+
+
+class ImportRowOut(ImportRowIn):
+    duplicate: bool  # that day, amount, kind and name is already here
+
+
+class ImportCategoryOut(Schema):
+    kind: str
+    category: str
+    subcategory: str
+    count: int
+    match_id: UUID | None  # the existing one of that name (None: will be created)
+
+
+class SkippedOut(Schema):
+    line: int
+    reason: str  # date | amount | type | transfer | zero
+    text: str
+
+
+class ImportPreviewOut(Schema):
+    rows: list[ImportRowOut]
+    categories: list[ImportCategoryOut]
+    skipped: list[SkippedOut]
+
+
+class ImportCategoryIn(Schema):
+    kind: Literal["expense", "income"]
+    category: str
+    subcategory: str = ""
+    target_id: UUID | None = None  # an existing category; None: by name, created if missing
+
+
+class ImportIn(Schema):
+    rows: list[ImportRowIn]
+    categories: list[ImportCategoryIn] = []
+    person_id: UUID | None = None
+
+
+class ImportOut(Schema):
+    created: int
+    categories: int  # new categories
+
+
+@router.post("/import/preview", response={200: ImportPreviewOut, 422: dict})
+def import_preview(request: HttpRequest, file: File[UploadedFile]):
+    """Read a CSV / TSV / .xlsx export: what importing it would do. 422
+    ``detail``: too_big | empty | xls | xlsx | columns."""
+    if file.size and file.size > importer.MAX_BYTES:
+        return 422, {"detail": "too_big"}
+    try:
+        return selectors.import_preview(get_ctx(request), file.read(), file.name or "")
+    except importer.ImportProblem as exc:
+        return 422, {"detail": exc.code}
+
+
+@router.post("/import", response={200: ImportOut, 422: dict})
+def run_import(request: HttpRequest, payload: ImportIn):
+    """Save the rows from the preview (the client sends them in chunks)."""
+    try:
+        return services.import_transactions(
+            get_ctx(request),
+            [r.dict() for r in payload.rows],
+            mapping=[m.dict() for m in payload.categories],
+            person_id=payload.person_id,
+        )
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
 
 
 @router.post("/transactions", response={200: TransactionOut, 422: dict})

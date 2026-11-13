@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from django.db.models import Count, Q, QuerySet, Sum
@@ -344,3 +345,65 @@ def debt_balances(ctx: AccessContext, *, include_settled: bool = False) -> list[
     return sorted(
         rows, key=lambda r: (r.balance == 0, -abs(r.balance), _name_key(r.counterparty_name))
     )
+
+
+# -------------------- Import --------------------
+
+
+def _same(a: str, b: str) -> bool:
+    return " ".join(a.split()).lower() == " ".join(b.split()).lower()
+
+
+def find_category(
+    kind: str, main: str, sub: str = "", categories: list[Category] | None = None
+) -> Category | None:
+    """The category at "main" (a main one) or "main > sub", by name, any case."""
+    for c in categories if categories is not None else Category.objects.select_related("parent"):
+        if c.kind != kind:
+            continue
+        if sub and c.parent and _same(c.parent.name, main) and _same(c.name, sub):
+            return c
+        if not sub and c.parent is None and _same(c.name, main):
+            return c
+    return None
+
+
+def import_preview(ctx: AccessContext, raw: bytes, filename: str = "") -> dict[str, Any]:
+    """What importing a file would do: its rows (each marked ``duplicate`` when
+    a transaction of that day, amount, kind and name is already here), the
+    category paths in it with the existing category each matches (none: it
+    will be created) and the lines skipped. Raises ``importer.ImportProblem``."""
+    from . import importer  # noqa: PLC0415
+
+    ctx.require("finance", "edit")  # only to import
+    rows, skipped = importer.parse(raw, filename)
+    categories = list(Category.objects.select_related("parent").exclude(kind="transfer"))
+    paths = Counter((r.kind, r.category, r.subcategory) for r in rows)
+    seen: set[tuple] = set()
+    if rows:
+        here = list_transactions(
+            ctx,
+            TransactionFilter(
+                date_from=min(r.date for r in rows), date_to=max(r.date for r in rows)
+            ),
+        ).values_list("date", "amount", "category__kind", "name")
+        seen = {(d, a, k, " ".join(n.split()).lower()) for d, a, k, n in here}
+
+    def duplicate(r: Any) -> bool:
+        name = " ".join(importer.name_and_note(r.description, r.note)[0].split()).lower()
+        return bool(name) and (r.date, r.amount, r.kind, name) in seen
+
+    return {
+        "rows": [{**asdict(r), "duplicate": duplicate(r)} for r in rows],
+        "categories": [
+            {
+                "kind": kind,
+                "category": main,
+                "subcategory": sub,
+                "count": n,
+                "match_id": getattr(find_category(kind, main, sub, categories), "id", None),
+            }
+            for (kind, main, sub), n in sorted(paths.items())
+        ],
+        "skipped": [asdict(s) for s in skipped],
+    }
