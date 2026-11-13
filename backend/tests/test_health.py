@@ -52,6 +52,18 @@ def condition(ctx, person, title="Angina", start=date(2026, 3, 1)):
 # ---- scoping -----------------------------------------------------------------
 
 
+def test_person_picker_shows_colours(client, family):
+    family["kid"].color = "#e64980"
+    family["kid"].save()
+    client.force_login(family["mom"].user)
+    people = {p["display_name"]: p for p in client.get("/api/health/people").json()}
+    assert people["Zosia"]["color"] == "#e64980"
+    assert people["Mama"]["color"].startswith("#")
+    # A child's picker: only themself.
+    client.force_login(family["kid"].user)
+    assert [p["display_name"] for p in client.get("/api/health/people").json()] == ["Zosia"]
+
+
 def test_child_sees_only_their_own_health(family):
     condition(family["parent"], family["mom"], "Migrena")
     own = condition(family["parent"], family["kid"], "Angina")

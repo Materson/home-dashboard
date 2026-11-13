@@ -30,7 +30,7 @@ export function HealthChooserPage() {
             style={{ textDecoration: "none" }}
           >
             <Group>
-              <Avatar color="indigo" radius="xl" size="lg">
+              <Avatar color={p.color} variant="filled" radius="xl" size="lg">
                 {p.display_name.slice(0, 2).toUpperCase()}
               </Avatar>
               <Text fw={600} size="lg">

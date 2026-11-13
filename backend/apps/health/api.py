@@ -23,6 +23,7 @@ router = Router()
 class PersonOut(Schema):
     id: UUID
     display_name: str
+    color: str  # the person's colour, as on People
 
 
 @router.get("/people", response=list[PersonOut])

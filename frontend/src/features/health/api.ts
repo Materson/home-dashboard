@@ -8,7 +8,7 @@ export type HealthKind =
   | "results"
   | "measurements";
 
-export type Person = { id: string; display_name: string };
+export type Person = { id: string; display_name: string; color: string };
 
 export type AppointmentSuggestions = {
   doctor: string[];
