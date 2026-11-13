@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { distinctColors, monthlyLine, periodRange, topSlices } from "./chartData";
+import { compareLines, distinctColors, monthKeys, monthlyLine, monthSpan, periodRange, topSlices } from "./chartData";
 import { equalSplit, remainder, sharesValid } from "./shares";
 
 describe("equalSplit", () => {
@@ -106,5 +106,56 @@ describe("investment chart axis", () => {
     expect(lo).toBeGreaterThan(9900);
     expect(hi).toBeLessThan(10400);
     expect(valueDomain([])).toEqual([0, 1]);
+  });
+});
+
+describe("compareLines", () => {
+  const point = (key: string, year_month: string, kind: "expense" | "income", total: string) => ({ key, year_month, kind, total });
+  const names: Record<string, { label: string; color: string }> = {
+    fuel: { label: "Paliwo", color: "#fa5252" },
+    ola: { label: "Ola", color: "#fa5252" },
+    tiny: { label: "Drobne", color: "" },
+  };
+  const kinds = { expense: "wydatki", income: "przychody" };
+
+  it("draws a line per key over every month, biggest first, the rest hidden", () => {
+    const chart = compareLines(
+      [
+        point("fuel", "2026-02", "expense", "80"),
+        point("fuel", "2026-03", "expense", "300.5"),
+        point("ola", "2026-03", "expense", "60"),
+        point("ola", "2026-03", "income", "5000"),
+        point("tiny", "2026-03", "expense", "1"),
+        point("fuel", "2025-01", "expense", "999"), // outside the window
+      ],
+      new Date(2026, 2, 1),
+      3,
+      (key) => names[key],
+      kinds,
+      2,
+    );
+    expect(chart.hidden).toBe(1);
+    expect(chart.lines.map((l) => [l.label, l.strokeDasharray])).toEqual([
+      ["Ola · wydatki", undefined],
+      ["Ola · przychody", "5 5"],
+      ["Paliwo", undefined],
+    ]);
+    // the same colour per key, and two keys never share one
+    expect(chart.lines[0].color).toBe(chart.lines[1].color);
+    expect(chart.lines[2].color).not.toBe(chart.lines[0].color);
+    expect(chart.data).toEqual([
+      { month: "2026-01", l0: 0, l1: 0, l2: 0 },
+      { month: "2026-02", l0: 0, l1: 0, l2: 80 },
+      { month: "2026-03", l0: 60, l1: 5000, l2: 300.5 },
+    ]);
+  });
+});
+
+describe("monthSpan", () => {
+  it("turns dragged months into a date range, across a year end", () => {
+    const end = new Date(2026, 1, 1); // Feb 2026, 6 months: Sep 2025 .. Feb 2026
+    expect(monthKeys(end, 6)).toEqual(["2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02"]);
+    expect(monthSpan(end, 6, 2, 4)).toEqual([new Date(2025, 10, 1), new Date(2026, 0, 31)]);
+    expect(monthSpan(end, 6, 4, 5)).toEqual([new Date(2026, 0, 1), new Date(2026, 1, 28)]);
   });
 });

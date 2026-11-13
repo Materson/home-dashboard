@@ -472,3 +472,149 @@ def test_sub_category_api(client, fam):
         {"date_from": "2026-03-01", "date_to": "2026-03-31", "parent": str(car.id)},
     ).json()
     assert [(r["label"], r["total"]) for r in rows] == [("Myjnia", "30.00")]
+
+
+@pytest.fixture
+def chart_data(fam):
+    """Fuel at Orlen (Zosia's) and Shell (split), an inspection for the
+    household, a salary (Ola's) — in March; Orlen for the household in Feb."""
+    fuel = Category.objects.get(key="car.fuel")
+
+    def named(name, amount, **kw):
+        t = tx(fam, amount, **kw)
+        Transaction.objects.filter(pk=t.pk).update(name=name)
+
+    named("Orlen", "200", category=fuel, person=fam["kid"])
+    named("Shell", "100", category=fuel, shares=split((fam["wife"], "60"), (fam["kid"], "40")))
+    named("Stacja kontroli", "150", category=Category.objects.get(key="car.inspection"))
+    named("Wypłata", "5000", category=fam["salary"], person=fam["wife"])
+    named("Orlen", "80", category=fuel, on=date(2026, 2, 10))
+    return {"car": Category.objects.get(key="car"), "fuel": fuel}
+
+
+def test_chart_filters_narrow_the_pies(fam, chart_data):
+    march = {"date_from": date(2026, 3, 1), "date_to": date(2026, 3, 31), "kind": "expense"}
+
+    def car(**f):
+        rows = selectors.category_totals(fam["ctx"], f=selectors.ChartFilter(**f), **march)
+        return [(s.key, s.total) for s in rows]
+
+    car_id = str(chart_data["car"].id)
+    assert car(terms=["orlen", " SHELL ", ""]) == [(car_id, Decimal("300"))]
+    assert car(persons=[str(fam["kid"].id)]) == [(car_id, Decimal("240"))]  # her parts
+    assert car(persons=[str(fam["kid"].id), "shared"]) == [(car_id, Decimal("390"))]
+    assert car(amount_min=Decimal("150")) == [(car_id, Decimal("350"))]
+    # picked categories are the slices — a picked sub-category isn't folded
+    # into its main one; what else is in a picked main one goes there
+    fuel_id = str(chart_data["fuel"].id)
+    inspection_id = str(Category.objects.get(key="car.inspection").id)
+    assert car(category_keys=["car.inspection"]) == [(inspection_id, Decimal("150"))]
+    assert car(category_keys=["car.fuel", "car.inspection"]) == [
+        (fuel_id, Decimal("300")),
+        (inspection_id, Decimal("150")),
+    ]
+    assert car(category_keys=["car", "car.fuel"]) == [
+        (fuel_id, Decimal("300")),
+        (car_id, Decimal("150")),
+    ]
+    assert car(persons=["not-a-person"]) == []
+
+    def people(**f):
+        rows = selectors.person_totals(fam["ctx"], f=selectors.ChartFilter(**f), **march)
+        return {(s.key, s.total) for s in rows}
+
+    kid, wife = str(fam["kid"].id), str(fam["wife"].id)
+    assert people(persons=[kid, "shared"]) == {(kid, Decimal("240")), ("shared", Decimal("150"))}
+    assert people(terms=["shell"]) == {(wife, Decimal("60")), (kid, Decimal("40"))}
+
+
+def test_chart_filters_narrow_the_trend(fam, chart_data):
+    rows = selectors.monthly_totals(
+        fam["ctx"], until=date(2026, 3, 31), months=2, f=selectors.ChartFilter(terms=["Orlen"])
+    )
+    assert [(m.year_month, m.kind, m.total) for m in rows] == [
+        ("2026-02", "expense", Decimal("80")),
+        ("2026-03", "expense", Decimal("200")),
+    ]
+
+
+def test_lines_to_compare(fam, chart_data):
+    def lines(by, **f):
+        rows = selectors.monthly_series(
+            fam["ctx"], by=by, until=date(2026, 3, 1), months=2, f=selectors.ChartFilter(**f)
+        )
+        return {(p.key, p.year_month, p.kind, p.total) for p in rows}
+
+    car, fuel = str(chart_data["car"].id), str(chart_data["fuel"].id)
+    # a chosen main category brings its sub-categories; both lines drawn
+    assert lines("category", category_keys=["car.fuel", "car"]) == {
+        (fuel, "2026-02", "expense", Decimal("80")),
+        (fuel, "2026-03", "expense", Decimal("300")),
+        (car, "2026-02", "expense", Decimal("80")),
+        (car, "2026-03", "expense", Decimal("450")),
+    }
+    salary = str(fam["salary"].parent_id)
+    assert lines("category") == {  # none chosen: every main category
+        (car, "2026-02", "expense", Decimal("80")),
+        (car, "2026-03", "expense", Decimal("450")),
+        (salary, "2026-03", "income", Decimal("5000")),
+    }
+    kid, wife = str(fam["kid"].id), str(fam["wife"].id)
+    assert lines("person") == {
+        (wife, "2026-03", "expense", Decimal("60")),
+        (wife, "2026-03", "income", Decimal("5000")),
+        (kid, "2026-03", "expense", Decimal("240")),
+        ("shared", "2026-02", "expense", Decimal("80")),
+        ("shared", "2026-03", "expense", Decimal("150")),
+    }
+    assert lines("person", persons=[kid], terms=["shell"]) == {
+        (kid, "2026-03", "expense", Decimal("40"))
+    }
+    assert lines("term", terms=["Orlen", "shell"]) == {
+        ("Orlen", "2026-02", "expense", Decimal("80")),
+        ("Orlen", "2026-03", "expense", Decimal("200")),
+        ("shell", "2026-03", "expense", Decimal("100")),
+    }
+    assert lines("term") == set()  # no words, no lines
+    assert lines("person", persons=["not-a-person"]) == set()
+
+
+def test_lines_need_finance(chart_data):
+    ctx = AccessContext.for_user(UserFactory())
+    assert selectors.monthly_series(ctx, by="person", until=date(2026, 3, 1)) == []
+    assert (
+        selectors.category_totals(
+            ctx, date_from=date(2026, 3, 1), date_to=date(2026, 3, 31), kind="expense"
+        )
+        == []
+    )
+
+
+def test_chart_api_filters(client, fam, chart_data):
+    client.force_login(UserFactory(is_superuser=True))
+    resp = client.get(
+        "/api/finance/monthly-series",
+        {"by": "term", "q": ["Orlen", "Shell"], "until": "2026-03-01", "months": 2},
+    )
+    assert resp.status_code == 200
+    assert {(r["key"], r["year_month"], r["total"]) for r in resp.json()} == {
+        ("Orlen", "2026-02", "80.00"),
+        ("Orlen", "2026-03", "200.00"),
+        ("Shell", "2026-03", "100.00"),
+    }
+    resp = client.get(
+        "/api/finance/category-totals",
+        {
+            "date_from": "2026-03-01",
+            "date_to": "2026-03-31",
+            "persons": [str(fam["kid"].id), "shared"],
+        },
+    )
+    assert [r["total"] for r in resp.json()] == ["390.00"]
+    resp = client.get(
+        "/api/finance/monthly-totals",
+        {"until": "2026-03-01", "months": 1, "category_keys": "car.inspection"},
+    )
+    assert [(r["kind"], r["total"]) for r in resp.json()] == [("expense", "150.00")]
+    resp = client.get("/api/finance/monthly-series", {"by": "everything"})
+    assert resp.status_code == 422

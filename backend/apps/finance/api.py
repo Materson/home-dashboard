@@ -439,13 +439,61 @@ def delete_transaction(request: HttpRequest, tx_id: UUID) -> dict[str, bool]:
     return {"deleted": True}
 
 
+class ChartSearch(Schema):
+    """Chart filters beside the period (``selectors.ChartFilter``)."""
+
+    q: list[str] | None = None  # any of these words in the name / notes
+    amount_min: Decimal | None = None
+    amount_max: Decimal | None = None
+    category_keys: list[str] | None = None
+    persons: list[str] | None = None  # people's ids and/or "shared": only their parts
+
+
+def _chart_filter(s: ChartSearch) -> selectors.ChartFilter:
+    return selectors.ChartFilter(
+        terms=s.q,
+        amount_min=s.amount_min,
+        amount_max=s.amount_max,
+        category_keys=s.category_keys,
+        persons=s.persons,
+    )
+
+
 @router.get("/monthly-totals", response=list[MonthlySumOut])
 def monthly_totals(
-    request: HttpRequest, until: date | None = None, months: int = 12, person: str | None = None
+    request: HttpRequest,
+    filters: Query[ChartSearch],
+    until: date | None = None,
+    months: int = 12,
+    person: str | None = None,
 ) -> list[selectors.MonthlySum]:
     """Chart data: the ``months`` months ending with ``until``'s month;
     ``person`` = one person's parts, or "shared" for unsplit spending."""
-    return selectors.monthly_totals(get_ctx(request), until=until, months=months, person=person)
+    return selectors.monthly_totals(
+        get_ctx(request), until=until, months=months, person=person, f=_chart_filter(filters)
+    )
+
+
+class SeriesPointOut(Schema):
+    key: str
+    year_month: str
+    kind: str
+    total: Decimal
+
+
+@router.get("/monthly-series", response=list[SeriesPointOut])
+def monthly_series(
+    request: HttpRequest,
+    by: Literal["category", "person", "term"],
+    filters: Query[ChartSearch],
+    until: date | None = None,
+    months: int = 12,
+) -> list[selectors.SeriesPoint]:
+    """Line chart lines to compare: monthly totals per category, person or
+    search word (``selectors.monthly_series``)."""
+    return selectors.monthly_series(
+        get_ctx(request), by=by, until=until, months=months, f=_chart_filter(filters)
+    )
 
 
 class SliceOut(Schema):
@@ -460,6 +508,7 @@ def category_totals(  # noqa: PLR0917 — query parameters
     request: HttpRequest,
     date_from: date,
     date_to: date,
+    filters: Query[ChartSearch],
     kind: Literal["income", "expense"] = "expense",
     person: str | None = None,
     currency: str = "PLN",
@@ -475,20 +524,27 @@ def category_totals(  # noqa: PLR0917 — query parameters
         person=person,
         currency=currency,
         parent=parent,
+        f=_chart_filter(filters),
     )
 
 
 @router.get("/person-totals", response=list[SliceOut])
-def person_totals(
+def person_totals(  # noqa: PLR0917 — query parameters
     request: HttpRequest,
     date_from: date,
     date_to: date,
+    filters: Query[ChartSearch],
     kind: Literal["income", "expense"] = "expense",
     currency: str = "PLN",
 ) -> list[selectors.Slice]:
     """Pie chart data: who the money was for ("shared" = the household)."""
     return selectors.person_totals(
-        get_ctx(request), date_from=date_from, date_to=date_to, kind=kind, currency=currency
+        get_ctx(request),
+        date_from=date_from,
+        date_to=date_to,
+        kind=kind,
+        currency=currency,
+        f=_chart_filter(filters),
     )
 
 

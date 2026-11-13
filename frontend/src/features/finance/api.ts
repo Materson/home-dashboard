@@ -137,6 +137,28 @@ export type ImportRequest = {
   person_id: string | null;
 };
 
+/** What the charts count, beside the period. */
+export type ChartFilters = {
+  /** Any of these words in the name / notes. */
+  q?: string[];
+  amount_min?: string;
+  amount_max?: string;
+  category_keys?: string[];
+  /** People's ids and/or "shared": only their parts (and the household's unsplit ones). */
+  persons?: string[];
+};
+
+/** What the line chart compares, one line each. */
+export type LineSplit = "category" | "person" | "term";
+
+/** One line's total in a month: ``key`` is a category's id, a person's id / "shared", or a word. */
+export type SeriesPoint = {
+  key: string;
+  year_month: string; // YYYY-MM
+  kind: "expense" | "income" | "transfer";
+  total: string;
+};
+
 export type MonthlyTotal = {
   year_month: string;        // YYYY-MM
   kind: "expense" | "income" | "transfer";
@@ -291,24 +313,21 @@ export const financeApi = {
   updateTransaction: (id: string, body: TransactionInput & { update_future?: boolean }) =>
     call<Transaction>(`/transactions/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteTransaction: (id: string) => call<{ deleted: boolean }>(`/transactions/${id}`, { method: "DELETE" }),
-  monthlyTotals: (until: string, months = 12, person?: string | null) =>
-    call<MonthlyTotal[]>(
-      `/monthly-totals?until=${until}&months=${months}${person ? `&person=${person}` : ""}`,
-    ),
+  monthlyTotals: (until: string, months = 12, f: ChartFilters = {}) =>
+    call<MonthlyTotal[]>(`/monthly-totals${qs({ ...f, until, months })}`),
+  /** The line chart split into lines to compare. */
+  monthlySeries: (by: LineSplit, until: string, months: number, f: ChartFilters = {}) =>
+    call<SeriesPoint[]>(`/monthly-series${qs({ ...f, by, until, months })}`),
   /** Per main category; with ``parent``, that main category per sub-category. */
   categoryTotals: (
     from: string,
     to: string,
     kind: "income" | "expense",
-    person?: string | null,
+    f: ChartFilters = {},
     parent?: string | null,
-  ) =>
-    call<Slice[]>(
-      `/category-totals?date_from=${from}&date_to=${to}&kind=${kind}` +
-        `${person ? `&person=${person}` : ""}${parent ? `&parent=${parent}` : ""}`,
-    ),
-  personTotals: (from: string, to: string, kind: "income" | "expense") =>
-    call<Slice[]>(`/person-totals?date_from=${from}&date_to=${to}&kind=${kind}`),
+  ) => call<Slice[]>(`/category-totals${qs({ ...f, date_from: from, date_to: to, kind, parent })}`),
+  personTotals: (from: string, to: string, kind: "income" | "expense", f: ChartFilters = {}) =>
+    call<Slice[]>(`/person-totals${qs({ ...f, date_from: from, date_to: to, kind })}`),
 
   listRecurring: () => call<RecurringRule[]>("/recurring"),
   updateRecurring: (id: string, body: RecurringEdit) =>

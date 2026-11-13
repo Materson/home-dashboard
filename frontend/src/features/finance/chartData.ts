@@ -1,5 +1,5 @@
 /** Pure helpers for the finance charts page (tested in chartData.test.ts). */
-import type { MonthlyTotal, Slice } from "./api";
+import type { MonthlyTotal, SeriesPoint, Slice } from "./api";
 
 export type PeriodMode = "month" | "year" | "last12" | "range";
 
@@ -73,14 +73,30 @@ export function topSlices(slices: Slice[], keep: number, otherLabel: string, sha
 
 export type MonthPoint = { month: string; income: number; expense: number; balance: number };
 
+/** "YYYY-MM" of the ``months`` months ending with ``endMonth``, oldest first. */
+export function monthKeys(endMonth: Date, months: number): string[] {
+  const keys: string[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(endMonth.getFullYear(), endMonth.getMonth() - i, 1);
+    keys.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
+  }
+  return keys;
+}
+
+/** The months ``from``..``to`` (indexes into ``monthKeys``) as dates: the
+ *  first day of the one, the last day of the other. */
+export function monthSpan(endMonth: Date, months: number, from: number, to: number): [Date, Date] {
+  const first = endMonth.getMonth() - (months - 1);
+  return [
+    new Date(endMonth.getFullYear(), first + from, 1),
+    new Date(endMonth.getFullYear(), first + to + 1, 0),
+  ];
+}
+
 /** Every month of the ``months`` ending with ``endMonth`` (gaps as 0), PLN only. */
 export function monthlyLine(totals: MonthlyTotal[], endMonth: Date, months = 12, currency = "PLN"): MonthPoint[] {
   const points = new Map<string, MonthPoint>();
-  for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(endMonth.getFullYear(), endMonth.getMonth() - i, 1);
-    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-    points.set(key, { month: key, income: 0, expense: 0, balance: 0 });
-  }
+  for (const key of monthKeys(endMonth, months)) points.set(key, { month: key, income: 0, expense: 0, balance: 0 });
   for (const row of totals) {
     const p = points.get(row.year_month);
     if (!p || row.currency !== currency) continue;
@@ -89,4 +105,60 @@ export function monthlyLine(totals: MonthlyTotal[], endMonth: Date, months = 12,
   }
   for (const p of points.values()) p.balance = Math.round((p.income - p.expense) * 100) / 100;
   return [...points.values()];
+}
+
+export type Line = { name: string; label: string; color: string; strokeDasharray?: string };
+export type CompareChart = { data: Record<string, string | number>[]; lines: Line[]; hidden: number };
+
+/** Lines to compare: one per key — the ``keep`` biggest (the rest counted in
+ *  ``hidden``) — and a key with both expenses and income drawn twice
+ *  (income dashed). Every month of the window, gaps as 0. */
+export function compareLines(
+  points: SeriesPoint[],
+  endMonth: Date,
+  months: number,
+  describe: (key: string) => { label: string; color: string },
+  kindLabels: { expense: string; income: string },
+  keep = 8,
+): CompareChart {
+  const months_ = monthKeys(endMonth, months);
+  const inWindow = new Set(months_);
+  const byKey = new Map<string, Map<"expense" | "income", Map<string, number>>>();
+  const totals = new Map<string, number>();
+  for (const p of points) {
+    if (!inWindow.has(p.year_month) || (p.kind !== "expense" && p.kind !== "income")) continue;
+    const kinds = byKey.get(p.key) ?? new Map();
+    byKey.set(p.key, kinds);
+    const perMonth = kinds.get(p.kind) ?? new Map<string, number>();
+    kinds.set(p.kind, perMonth);
+    perMonth.set(p.year_month, (perMonth.get(p.year_month) ?? 0) + Number(p.total));
+    totals.set(p.key, (totals.get(p.key) ?? 0) + Number(p.total));
+  }
+  const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  const shown = ranked.slice(0, keep);
+  const colors = new Map(
+    distinctColors(shown.map(([key, total]) => ({ key, label: "", color: describe(key).color, total: String(total) }))).map(
+      (s) => [s.key, s.color],
+    ),
+  );
+  const data: Record<string, string | number>[] = months_.map((month) => ({ month }));
+  const lines: Line[] = [];
+  for (const [key] of shown) {
+    const kinds = byKey.get(key)!;
+    const both = kinds.size > 1;
+    for (const kind of ["expense", "income"] as const) {
+      const perMonth = kinds.get(kind);
+      if (!perMonth) continue;
+      const name = `l${lines.length}`; // chart keys can't hold the dots of category keys
+      const label = describe(key).label;
+      lines.push({
+        name,
+        label: both ? `${label} · ${kindLabels[kind]}` : label,
+        color: colors.get(key) ?? GREY,
+        ...(both && kind === "income" ? { strokeDasharray: "5 5" } : {}),
+      });
+      data.forEach((row, i) => (row[name] = Math.round((perMonth.get(months_[i]) ?? 0) * 100) / 100));
+    }
+  }
+  return { data, lines, hidden: ranked.length - shown.length };
 }

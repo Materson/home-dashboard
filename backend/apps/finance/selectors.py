@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from django.db.models import Count, Q, QuerySet, Sum
+from django.db.models import Count, F, Q, QuerySet, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
@@ -24,6 +24,8 @@ from .models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from apps.access.context import AccessContext
 
 
@@ -89,66 +91,214 @@ class MonthlySum:
     total: Decimal
     currency: str
 
+    def __post_init__(self) -> None:
+        self.total = Decimal(self.total).quantize(Decimal("0.01"))  # SQLite sums drop the cents
+
 
 MAX_CHART_MONTHS = 36
+SHARED = "shared"  # person filter: the household's (not split to anyone)
 
 
-def monthly_totals(
-    ctx: AccessContext, *, until: date | None = None, months: int = 12, person: str | None = None
-) -> list[MonthlySum]:
-    """Totals grouped by (month, category.kind, currency) for the ``months``
-    calendar months ending with ``until``'s month (default: the current one)."""
-    if not ctx.has("finance", "view"):
-        return []
-    months = max(1, min(months, MAX_CHART_MONTHS))
-    until = until or timezone.localdate()
-    # Work on a running month index (year * 12 + month0) so year boundaries
-    # need no special-casing.
-    until_idx = until.year * 12 + until.month - 1
-    start = _month_start(until_idx - (months - 1))
-    end = _month_start(until_idx + 1) - timedelta(days=1)
+@dataclass(slots=True)
+class ChartFilter:
+    """What the charts count, beside the period: transactions whose name or
+    notes hold any of ``terms``, amounts and categories as on the list. With
+    ``persons`` (people's ids and/or "shared") only those people's parts
+    count — and, for "shared", the household's unsplit transactions."""
 
-    base = list_transactions(ctx, TransactionFilter(date_from=start, date_to=end))
-    if person and person != SHARED:
-        # Only this person's part of each transaction.
-        qs = (
-            TransactionShare.objects.filter(transaction__in=base, person_id=person)
-            .annotate(month=TruncMonth("transaction__date"))
-            .values("month", "transaction__category__kind", "transaction__currency")
-            .annotate(total=Sum("amount"))
-            .order_by("month")
-        )
-        return [
-            MonthlySum(
-                year_month=row["month"].strftime("%Y-%m"),
-                kind=row["transaction__category__kind"],
-                total=row["total"],
-                currency=row["transaction__currency"],
-            )
-            for row in qs
-        ]
-    if person == SHARED:
-        base = base.filter(shares__isnull=True)
-    qs = (
-        base.annotate(month=TruncMonth("date"))
-        .values("month", "category__kind", "currency")
-        .annotate(total=Sum("amount"))
-        .order_by("month")
+    terms: list[str] | None = None
+    amount_min: Decimal | None = None
+    amount_max: Decimal | None = None
+    category_keys: list[str] | None = None
+    persons: list[str] | None = None
+
+    @property
+    def words(self) -> list[str]:
+        return [w.strip() for w in self.terms or [] if w.strip()]
+
+
+def _has_words(words: list[str]) -> Q:
+    q = Q()
+    for word in words:
+        q |= Q(name__icontains=word) | Q(notes__icontains=word)
+    return q
+
+
+def _chart_base(
+    ctx: AccessContext, f: ChartFilter, *, date_from: date, date_to: date, kind: str | None = None
+) -> QuerySet[Transaction]:
+    qs = list_transactions(
+        ctx,
+        TransactionFilter(
+            date_from=date_from,
+            date_to=date_to,
+            amount_min=f.amount_min,
+            amount_max=f.amount_max,
+            category_keys=f.category_keys,
+            kind=kind,
+        ),
     )
-    out: list[MonthlySum] = []
-    for row in qs:
-        out.append(
-            MonthlySum(
-                year_month=row["month"].strftime("%Y-%m"),
-                kind=row["category__kind"],
-                total=row["total"],
-                currency=row["currency"],
-            )
+    return qs.filter(_has_words(f.words)) if f.words else qs
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _person_ids(persons: list[str]) -> list[UUID]:
+    """The people among ``persons`` ("shared" and junk left out)."""
+    return [UUID(p) for p in persons if p != SHARED and _is_uuid(p)]
+
+
+def _by_month_and_kind(prefix: str) -> dict[str, Any]:
+    return {"month": TruncMonth(f"{prefix}date"), "kind": F(f"{prefix}category__kind")}
+
+
+def _sums(
+    base: QuerySet[Transaction],
+    persons: list[str] | None,
+    group: Callable[[str], dict[str, Any]],
+) -> dict[tuple[Any, ...], Decimal]:
+    """``base``'s totals per ``group`` (name -> expression, for a lookup
+    prefix: "" on transactions, "transaction__" on their shares): whole
+    amounts, or with ``persons`` those people's parts (plus the unsplit
+    transactions for "shared")."""
+    out: dict[tuple[Any, ...], Decimal] = {}
+
+    def add(qs: QuerySet[Any], prefix: str) -> None:
+        exprs = {f"g_{name}": expr for name, expr in group(prefix).items()}
+        rows = qs.annotate(**exprs).values(*exprs).annotate(total=Sum("amount")).order_by()
+        for row in rows:
+            key = tuple(row[name] for name in exprs)
+            out[key] = out.get(key, Decimal(0)) + row["total"]
+
+    if not persons:
+        add(base, "")
+        return out
+    if ids := _person_ids(persons):
+        add(
+            TransactionShare.objects.filter(transaction__in=base, person_id__in=ids),
+            "transaction__",
         )
+    if SHARED in persons:
+        add(base.filter(shares__isnull=True), "")
     return out
 
 
-SHARED = "shared"  # person filter: the household's (not split to anyone)
+def _window(until: date | None, months: int) -> tuple[date, date]:
+    """First and last day of the ``months`` calendar months ending with
+    ``until``'s month (default: the current one)."""
+    months = max(1, min(months, MAX_CHART_MONTHS))
+    until = until or timezone.localdate()
+    # A running month index (year * 12 + month0) needs no year special-casing.
+    until_idx = until.year * 12 + until.month - 1
+    return _month_start(until_idx - (months - 1)), _month_start(until_idx + 1) - timedelta(days=1)
+
+
+def monthly_totals(
+    ctx: AccessContext,
+    *,
+    until: date | None = None,
+    months: int = 12,
+    person: str | None = None,
+    f: ChartFilter | None = None,
+) -> list[MonthlySum]:
+    """Totals grouped by (month, category.kind, currency) for the ``months``
+    calendar months ending with ``until``'s month (default: the current one);
+    ``person`` = one person's parts, or "shared" (as ``f.persons``)."""
+    if not ctx.has("finance", "view"):
+        return []
+    f = f or ChartFilter()
+    start, end = _window(until, months)
+    base = _chart_base(ctx, f, date_from=start, date_to=end)
+
+    def group(prefix: str) -> dict[str, Any]:
+        return {**_by_month_and_kind(prefix), "currency": F(f"{prefix}currency")}
+
+    sums = _sums(base, f.persons or ([person] if person else None), group)
+    return [
+        MonthlySum(month.strftime("%Y-%m"), kind, total, currency)
+        for (month, kind, currency), total in sorted(sums.items())
+    ]
+
+
+@dataclass(slots=True)
+class SeriesPoint:
+    key: str  # a category's id, a person's id / "shared", or a search word
+    year_month: str
+    kind: str
+    total: Decimal
+
+    def __post_init__(self) -> None:
+        self.total = Decimal(self.total).quantize(Decimal("0.01"))
+
+
+def monthly_series(
+    ctx: AccessContext,
+    *,
+    by: str,
+    until: date | None = None,
+    months: int = 12,
+    f: ChartFilter | None = None,
+    currency: str = "PLN",
+) -> list[SeriesPoint]:
+    """The line chart split into lines to compare, each with its monthly
+    totals per kind: ``by`` "category" (the filter's — a main one with its
+    sub-categories — else every main category), "person" (the filter's,
+    else everyone with a part and the household's unsplit ones) or "term"
+    (each search word)."""
+    if not ctx.has("finance", "view"):
+        return []
+    f = f or ChartFilter()
+    start, end = _window(until, months)
+    base = _chart_base(ctx, f, date_from=start, date_to=end).filter(currency=currency)
+    lines: dict[str, dict[tuple[Any, ...], Decimal]] = {}
+    if by == "category" and f.category_keys:
+        found = dict(Category.objects.filter(key__in=f.category_keys).values_list("key", "id"))
+        for key in f.category_keys:
+            if key in found:
+                inside = base.filter(Q(category__key=key) | Q(category__parent__key=key))
+                lines[str(found[key])] = _sums(inside, f.persons, _by_month_and_kind)
+    elif by == "category":
+
+        def per_category(prefix: str) -> dict[str, Any]:
+            return {"category": F(f"{prefix}category_id"), **_by_month_and_kind(prefix)}
+
+        sums = _sums(base, f.persons, per_category)
+        parents = dict(
+            Category.objects.filter(pk__in={c for c, _, _ in sums}).values_list("id", "parent_id")
+        )
+        for (cid, month, kind), total in sums.items():
+            line = lines.setdefault(str(parents[cid] or cid), {})
+            line[month, kind] = line.get((month, kind), Decimal(0)) + total
+    elif by == "person":
+        persons = f.persons or [
+            *(
+                str(pid)
+                for pid in TransactionShare.objects.filter(transaction__in=base)
+                .order_by()
+                .values_list("person_id", flat=True)
+                .distinct()
+            ),
+            SHARED,
+        ]
+        for p in persons:
+            lines[p] = _sums(base, [p], _by_month_and_kind)
+    elif by == "term":
+        for word in f.words:
+            lines[word] = _sums(base.filter(_has_words([word])), f.persons, _by_month_and_kind)
+    else:
+        raise ValueError(f"Unknown split: {by}")
+    return [
+        SeriesPoint(key, month.strftime("%Y-%m"), kind, total)
+        for key, sums_ in lines.items()
+        for (month, kind), total in sorted(sums_.items())
+        if total
+    ]
 
 
 @dataclass(slots=True)
@@ -171,58 +321,59 @@ def category_totals(
     person: str | None = None,
     currency: str = "PLN",
     parent: UUID | None = None,
+    f: ChartFilter | None = None,
 ) -> list[Slice]:
     """Per main category (sub-categories added into it), biggest first — the
     whole amount, or one person's part (``person`` = id) or only unsplit
-    household spending (``"shared"``). With ``parent``: inside that one main
-    category, per sub-category (what was booked straight into the main one
-    keeps its key)."""
-    base = list_transactions(
-        ctx, TransactionFilter(date_from=date_from, date_to=date_to, kind=kind)
-    ).filter(currency=currency)
+    household spending (``"shared"``); ``f`` narrows it (its ``persons`` as
+    ``person``). With categories picked in ``f``: per picked category, each
+    transaction under the most specific one it's in (a picked sub-category
+    stays itself). With ``parent``: inside that one main category, per
+    sub-category (what was booked straight into the main one keeps its key)."""
+    f = f or ChartFilter()
+    base = _chart_base(ctx, f, date_from=date_from, date_to=date_to, kind=kind).filter(
+        currency=currency
+    )
     if parent:
         base = base.filter(Q(category_id=parent) | Q(category__parent_id=parent))
-    if person and person != SHARED:
-        rows = (
-            TransactionShare.objects.filter(transaction__in=base, person_id=person)
-            .values("transaction__category_id")
-            .annotate(total=Sum("amount"))
-            .values_list("transaction__category_id", "total")
-        )
-    else:
-        if person == SHARED:
-            base = base.filter(shares__isnull=True)
-        rows = (
-            base.values("category_id")
-            .annotate(total=Sum("amount"))
-            .values_list("category_id", "total")
-        )
-    rows = list(rows)
-    cats = Category.objects.select_related("parent").in_bulk([cid for cid, _ in rows])
+    sums = _sums(
+        base,
+        f.persons or ([person] if person else None),
+        lambda prefix: {"category": F(f"{prefix}category_id")},
+    )
+    cats = Category.objects.select_related("parent").in_bulk([cid for (cid,) in sums])
+    picked = set(f.category_keys or [])
     totals: dict[Category, Decimal] = {}
-    for cid, total in rows:
+    for (cid,), total in sums.items():
         cat = cats[cid]
-        shown = cat if parent or cat.parent is None else cat.parent
+        own = parent or cat.parent is None or cat.key in picked
+        shown = cat if own else cat.parent
         totals[shown] = totals.get(shown, Decimal(0)) + total
     out = [Slice(str(c.id), c.name, c.color, total) for c, total in totals.items()]
     return sorted(out, key=lambda s: -s.total)
 
 
 def person_totals(
-    ctx: AccessContext, *, date_from: date, date_to: date, kind: str, currency: str = "PLN"
+    ctx: AccessContext,
+    *,
+    date_from: date,
+    date_to: date,
+    kind: str,
+    currency: str = "PLN",
+    f: ChartFilter | None = None,
 ) -> list[Slice]:
     """Who the money was for: each person's parts, plus the household's
-    unsplit share under ``"shared"``."""
+    unsplit share under ``"shared"`` — only those in ``f.persons`` when set."""
     from apps.people.models import Person  # noqa: PLC0415
 
-    base = list_transactions(
-        ctx, TransactionFilter(date_from=date_from, date_to=date_to, kind=kind)
-    ).filter(currency=currency)
-    rows = (
-        TransactionShare.objects.filter(transaction__in=base)
-        .values("person_id")
-        .annotate(total=Sum("amount"))
+    f = f or ChartFilter()
+    base = _chart_base(ctx, f, date_from=date_from, date_to=date_to, kind=kind).filter(
+        currency=currency
     )
+    shares = TransactionShare.objects.filter(transaction__in=base)
+    if f.persons:
+        shares = shares.filter(person_id__in=_person_ids(f.persons))
+    rows = list(shares.values("person_id").annotate(total=Sum("amount")).order_by())
     people = {p.id: p for p in Person.objects.filter(pk__in=[r["person_id"] for r in rows])}
     out = [
         Slice(
@@ -233,9 +384,10 @@ def person_totals(
         )
         for r in rows
     ]
-    shared = base.filter(shares__isnull=True).aggregate(s=Sum("amount"))["s"]
-    if shared:
-        out.append(Slice(SHARED, "", "#868e96", shared))
+    if not f.persons or SHARED in f.persons:
+        shared = base.filter(shares__isnull=True).aggregate(s=Sum("amount"))["s"]
+        if shared:
+            out.append(Slice(SHARED, "", "#868e96", shared))
     return sorted(out, key=lambda s: -s.total)
 
 
