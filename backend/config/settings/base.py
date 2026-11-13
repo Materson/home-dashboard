@@ -109,8 +109,12 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # allauth
 ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None  # the User has no username, email only
 ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*", "password2*"]
-ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+# No sign-up: an admin creates accounts and types the email, so login
+# doesn't wait for a verification ("mandatory" locked such accounts out).
+ACCOUNT_ADAPTER = "apps.accounts.adapter.AccountAdapter"
+ACCOUNT_EMAIL_VERIFICATION = "optional"
 ACCOUNT_RATE_LIMITS = {"login_failed": "5/5m"}
 MFA_SUPPORTED_TYPES = ["totp", "recovery_codes"]
 HEADLESS_ONLY = True

@@ -5,6 +5,13 @@ import { IconHomeHeart } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 
+/** What allauth's answer means for the person logging in. */
+const LOGIN_ERRORS: Record<number, string> = {
+  400: "auth.loginFailed", // wrong email or password
+  401: "auth.extraStep", // a pending step (email verification, 2FA code) this page doesn't do
+  429: "auth.tooMany", // too many failed attempts
+};
+
 export function LoginPage() {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -31,11 +38,14 @@ export function LoginPage() {
         headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
         body: JSON.stringify(values),
       });
-      if (!resp.ok) {
-        setError(t("auth.loginFailed"));
+      // 409: already logged in (e.g. through the admin) — just go on.
+      if (!resp.ok && resp.status !== 409) {
+        setError(t(LOGIN_ERRORS[resp.status] ?? "auth.unreachable"));
         return;
       }
       await qc.invalidateQueries();
+    } catch {
+      setError(t("auth.unreachable"));
     } finally {
       setBusy(false);
     }
