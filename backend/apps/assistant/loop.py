@@ -102,7 +102,7 @@ def run_turn(  # noqa: PLR0915 — one readable pass through the turn
     settings = policy.ai_settings()
     policies = policy.policies(settings)
     try:
-        profile = policy.profile_for(conversation, settings)
+        profile = policy.profile_for(conversation, settings, files=bool(images))
     except policy.NotConfigured as exc:
         return _reply(conversation, str(exc), error=True)
 

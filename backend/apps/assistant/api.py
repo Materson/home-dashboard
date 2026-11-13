@@ -26,10 +26,17 @@ router = Router()
 
 
 class ProfileBrief(Schema):
+    id: UUID
     name: str
     kind: str
     model: str
     location: str
+
+
+class ModelOption(ProfileBrief):
+    """A model one can pick in the chat."""
+
+    vision: bool  # reads photos / documents
 
 
 class StatusOut(Schema):
@@ -39,6 +46,9 @@ class StatusOut(Schema):
     can_manage: bool
     chat_profile: ProfileBrief | None
     local_profile: ProfileBrief | None
+    file_profile: ProfileBrief | None  # default for messages with files (None: the chat model)
+    models: list[ModelOption]  # switched on, to pick in the chat
+    documents: str  # where photos / PDFs may go: off / local / cloud
 
 
 @router.get("/status", response=StatusOut)
@@ -47,6 +57,7 @@ def status(request: HttpRequest) -> dict[str, Any]:
     s = policy.ai_settings()
     chat = s.chat_profile if s.chat_profile and s.chat_profile.enabled else None
     local = s.local_profile if s.local_profile and s.local_profile.enabled else None
+    files = s.file_profile if s.file_profile and s.file_profile.enabled else None
     return {
         "can_use": bool(ctx.user_id) and ctx.has("assistant", "view"),
         "configured": chat is not None,
@@ -54,6 +65,9 @@ def status(request: HttpRequest) -> dict[str, Any]:
         "can_manage": policy.can_manage(ctx),
         "chat_profile": chat,
         "local_profile": local,
+        "file_profile": files,
+        "models": list(ProviderProfile.objects.filter(enabled=True)),
+        "documents": policy.policies(s)["documents"],
     }
 
 
@@ -65,10 +79,19 @@ class ConversationOut(Schema):
     title: str
     private: bool
     updated_at: datetime
+    text_profile_id: UUID | None  # picked in the chat (None: the default)
+    file_profile_id: UUID | None
 
 
 class ConversationIn(Schema):
     private: bool = False
+    text_profile_id: UUID | None = None
+    file_profile_id: UUID | None = None
+
+
+class ModelsIn(Schema):
+    text_profile_id: UUID | None
+    file_profile_id: UUID | None
 
 
 class TitleIn(Schema):
@@ -130,9 +153,21 @@ def list_conversations(request: HttpRequest) -> Any:
     return selectors.list_conversations(get_ctx(request))
 
 
-@router.post("/conversations", response=ConversationOut)
-def create_conversation(request: HttpRequest, payload: ConversationIn) -> Any:
-    return services.create_conversation(get_ctx(request), private=payload.private)
+@router.post("/conversations", response={200: ConversationOut, 422: dict})
+def create_conversation(request: HttpRequest, payload: ConversationIn):
+    try:
+        return services.create_conversation(get_ctx(request), **payload.dict())
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
+
+
+@router.put("/conversations/{conversation_id}/models", response={200: ConversationOut, 422: dict})
+def set_models(request: HttpRequest, conversation_id: UUID, payload: ModelsIn):
+    """Which models answer from now on: for text, and for messages with files."""
+    try:
+        return services.set_models(get_ctx(request), conversation_id, **payload.dict())
+    except ValueError as exc:
+        return 422, {"detail": str(exc)}
 
 
 @router.put("/conversations/{conversation_id}", response=ConversationOut)
@@ -243,14 +278,18 @@ class ProfileOut(Schema):
 
 
 class SettingsIn(Schema):
+    """Only the fields sent change (the page saves one at a time)."""
+
     chat_profile_id: UUID | None = None
     local_profile_id: UUID | None = None
+    file_profile_id: UUID | None = None
     policies: dict[str, str] = {}
 
 
 class SettingsOut(Schema):
     chat_profile_id: UUID | None
     local_profile_id: UUID | None
+    file_profile_id: UUID | None
     policies: dict[str, str]
     profiles: list[ProfileOut]
 
@@ -260,6 +299,7 @@ def _settings_out() -> dict[str, Any]:
     return {
         "chat_profile_id": s.chat_profile_id,
         "local_profile_id": s.local_profile_id,
+        "file_profile_id": s.file_profile_id,
         "policies": policy.policies(s),
         "profiles": list(ProviderProfile.objects.all()),
     }
@@ -274,7 +314,7 @@ def get_settings(request: HttpRequest) -> dict[str, Any]:
 @router.put("/settings", response={200: SettingsOut, 422: dict})
 def put_settings(request: HttpRequest, payload: SettingsIn):
     try:
-        services.save_settings(get_ctx(request), payload.dict())
+        services.save_settings(get_ctx(request), payload.dict(exclude_unset=True))
     except ValueError as exc:
         return 422, {"detail": str(exc)}
     return _settings_out()

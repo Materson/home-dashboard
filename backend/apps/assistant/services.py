@@ -30,9 +30,49 @@ MAX_TEXT = 4000
 # -------------------- Conversations --------------------
 
 
-def create_conversation(ctx: AccessContext, *, private: bool = False) -> Conversation:
+def _model(profile_id: UUID | None, *, private: bool, files: bool) -> ProviderProfile | None:
+    """A model picked in the chat (None: the default), checked for its job."""
+    if profile_id is None:
+        return None
+    profile = ProviderProfile.objects.filter(pk=profile_id, enabled=True).first()
+    if profile is None:
+        raise ValueError("Nie ma takiego modelu (albo jest wyłączony).")
+    if private and profile.location != ProviderProfile.Location.LOCAL:
+        raise ValueError("W prywatnej rozmowie tylko model lokalny.")
+    if files and not profile.vision:
+        raise ValueError(f"Model „{profile.name}” nie czyta zdjęć ani dokumentów.")
+    return profile
+
+
+def create_conversation(
+    ctx: AccessContext,
+    *,
+    private: bool = False,
+    text_profile_id: UUID | None = None,
+    file_profile_id: UUID | None = None,
+) -> Conversation:
     require_use(ctx)
-    return Conversation.objects.create(owner_id=ctx.user_id, private=private)
+    return Conversation.objects.create(
+        owner_id=ctx.user_id,
+        private=private,
+        text_profile=_model(text_profile_id, private=private, files=False),
+        file_profile=_model(file_profile_id, private=private, files=True),
+    )
+
+
+def set_models(
+    ctx: AccessContext,
+    conversation_id: UUID,
+    *,
+    text_profile_id: UUID | None,
+    file_profile_id: UUID | None,
+) -> Conversation:
+    """The models a conversation uses from now on (None: the default)."""
+    conv = get_conversation(ctx, conversation_id)
+    conv.text_profile = _model(text_profile_id, private=conv.private, files=False)
+    conv.file_profile = _model(file_profile_id, private=conv.private, files=True)
+    conv.save(update_fields=["text_profile", "file_profile", "updated_at"])
+    return conv
 
 
 def update_conversation(ctx: AccessContext, conversation_id: UUID, *, title: str) -> Conversation:
@@ -96,7 +136,7 @@ def _require_manage(ctx: AccessContext) -> None:
 def save_settings(ctx: AccessContext, data: dict[str, Any]) -> AISettings:
     _require_manage(ctx)
     settings = policy.ai_settings()
-    for key in ("chat_profile_id", "local_profile_id"):
+    for key in ("chat_profile_id", "local_profile_id", "file_profile_id"):
         if key in data:
             pid = data[key]
             if pid and not ProviderProfile.objects.filter(pk=pid).exists():
@@ -106,6 +146,9 @@ def save_settings(ctx: AccessContext, data: dict[str, Any]) -> AISettings:
         local = ProviderProfile.objects.get(pk=settings.local_profile_id)
         if local.location != ProviderProfile.Location.LOCAL:
             raise ValueError("the private-conversation model must be a local one")
+    file_model = ProviderProfile.objects.filter(pk=settings.file_profile_id).first()
+    if file_model and not file_model.vision:
+        raise ValueError("the file model must read photos and documents")
     if "policies" in data:
         bad = {
             k: v

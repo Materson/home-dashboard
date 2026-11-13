@@ -1,6 +1,8 @@
 /** Assistant API: status, conversations, messages (with photos), proposed
  *  changes, "what was sent", and the admin AI settings. */
 
+import i18n from "@/i18n";
+
 export type Location = "cloud" | "local";
 export type ProviderKind = "anthropic" | "openai" | "google" | "openrouter" | "ollama" | "openai_compatible";
 
@@ -15,7 +17,10 @@ export type OpenRouterModel = {
 };
 export type Policy = "off" | "local" | "cloud";
 
-export type ProfileBrief = { name: string; kind: ProviderKind; model: string; location: Location };
+export type ProfileBrief = { id: string; name: string; kind: ProviderKind; model: string; location: Location };
+
+/** A model one can pick in the chat. */
+export type ModelOption = ProfileBrief & { vision: boolean };
 
 export type Status = {
   can_use: boolean;
@@ -24,9 +29,17 @@ export type Status = {
   can_manage: boolean;
   chat_profile: ProfileBrief | null;
   local_profile: ProfileBrief | null;
+  /** Default for messages with files (null: the chat model). */
+  file_profile: ProfileBrief | null;
+  models: ModelOption[];
+  /** Where photos / PDFs may go. */
+  documents: Policy;
 };
 
-export type Conversation = { id: string; title: string; private: boolean; updated_at: string };
+/** The models a conversation uses (null: the default from the AI settings). */
+export type ModelChoice = { text_profile_id: string | null; file_profile_id: string | null };
+
+export type Conversation = { id: string; title: string; private: boolean; updated_at: string } & ModelChoice;
 
 export type ActionStatus = "proposed" | "done" | "cancelled" | "undone" | "failed";
 export type Action = {
@@ -85,6 +98,7 @@ export type ProfilePayload = Omit<Profile, "id" | "has_key"> & { api_key: string
 export type AISettings = {
   chat_profile_id: string | null;
   local_profile_id: string | null;
+  file_profile_id: string | null;
   policies: Record<string, Policy>;
   profiles: Profile[];
 };
@@ -107,7 +121,13 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (typeof init.body === "string") headers.set("Content-Type", "application/json");
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) headers.set("X-CSRFToken", csrf());
-  const resp = await fetch("/api/assistant" + path, { ...init, headers, credentials: "include" });
+  let resp: Response;
+  try {
+    resp = await fetch("/api/assistant" + path, { ...init, headers, credentials: "include" });
+  } catch {
+    // No answer at all ("Failed to fetch"): the server is down or the connection broke.
+    throw new ApiError(0, i18n.t("assistant.noConnection"));
+  }
   if (!resp.ok) {
     const body = (await resp.json().catch(() => ({}))) as { detail?: string };
     throw new ApiError(resp.status, body.detail ?? `${method} ${path} failed: ${resp.status}`);
@@ -120,7 +140,9 @@ const json = (method: string, body: unknown): RequestInit => ({ method, body: JS
 export const assistantApi = {
   status: () => call<Status>("/status"),
   conversations: () => call<Conversation[]>("/conversations"),
-  createConversation: (isPrivate: boolean) => call<Conversation>("/conversations", json("POST", { private: isPrivate })),
+  createConversation: (isPrivate: boolean, models: ModelChoice) =>
+    call<Conversation>("/conversations", json("POST", { private: isPrivate, ...models })),
+  setModels: (id: string, models: ModelChoice) => call<Conversation>(`/conversations/${id}/models`, json("PUT", models)),
   renameConversation: (id: string, title: string) => call<Conversation>(`/conversations/${id}`, json("PUT", { title })),
   deleteConversation: (id: string) => call<{ deleted: boolean }>(`/conversations/${id}`, { method: "DELETE" }),
   messages: (id: string) => call<Message[]>(`/conversations/${id}/messages`),

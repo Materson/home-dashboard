@@ -31,8 +31,9 @@ import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 
 import { ActionCard, CHANGED_KEYS } from "./ActionCard";
-import { type Conversation, type Message, ASSISTANT_KEY, assistantApi } from "./api";
+import { type Conversation, type Message, type ModelChoice, ASSISTANT_KEY, assistantApi } from "./api";
 import { CallsModal } from "./CallsModal";
+import { lastChoice, ModelPicker, rememberChoice, validChoice } from "./ModelPicker";
 
 const ACCEPT = "image/jpeg,image/png,image/webp,application/pdf";
 
@@ -48,6 +49,8 @@ export function ChatPanel(props: {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [isPrivate, setPrivate] = useState(false);
+  // Models for a conversation not started yet (the last picks on this device).
+  const [newChoice, setNewChoice] = useState<ModelChoice>(lastChoice);
   const [sending, setSending] = useState<{ text: string; files: File[] } | null>(null);
   const [callsFor, setCallsFor] = useState<string | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -68,7 +71,9 @@ export function ChatPanel(props: {
     mutationFn: async (v: { text: string; files: File[] }) => {
       let target = conv;
       if (!target) {
-        target = await assistantApi.createConversation(isPrivate || !status.data?.configured);
+        const priv = isPrivate || !status.data?.configured;
+        const models = status.data ? validChoice(newChoice, status.data, priv) : newChoice;
+        target = await assistantApi.createConversation(priv, models);
         setStarted(target);
         props.onStarted(target);
       }
@@ -77,6 +82,11 @@ export function ChatPanel(props: {
     },
     onMutate: (v) => setSending(v),
     onSettled: () => setSending(null),
+    // Not sent: the text and files go back in the box, to try again.
+    onError: (_, v) => {
+      setText((current) => current || v.text);
+      setFiles((current) => (current.length ? current : v.files));
+    },
     onSuccess: ({ target, result }) => {
       // The list may have been reloaded meanwhile (e.g. back to the tab): no doubles.
       const added = new Set([result.question.id, result.answer.id]);
@@ -94,6 +104,19 @@ export function ChatPanel(props: {
       }
     },
   });
+
+  const setModels = useMutation({
+    mutationFn: (v: { id: string; choice: ModelChoice }) => assistantApi.setModels(v.id, v.choice),
+    onSuccess: (updated) => {
+      if (started?.id === updated.id) setStarted(updated);
+      qc.invalidateQueries({ queryKey: [...ASSISTANT_KEY, "conversations"] });
+    },
+  });
+  const pickModels = (choice: ModelChoice) => {
+    rememberChoice(choice);
+    if (conv) setModels.mutate({ id: conv.id, choice });
+    else setNewChoice(choice);
+  };
 
   const submit = () => {
     if ((!text.trim() && !files.length) || send.isPending) return;
@@ -126,20 +149,16 @@ export function ChatPanel(props: {
   }
   // Only a local model configured → every new conversation is private.
   const privateConv = conv ? conv.private : isPrivate || !s?.configured;
-  const model = privateConv ? s?.local_profile : s?.chat_profile;
+  const choice: ModelChoice = conv
+    ? { text_profile_id: conv.text_profile_id, file_profile_id: conv.file_profile_id }
+    : newChoice;
 
   return (
     <Stack gap="xs" h={props.height}>
-      <Group justify="space-between" wrap="nowrap">
-        {model && (
-          <Group gap={6} wrap="nowrap">
-            <Badge size="sm" variant="light" color={model.location === "cloud" ? "orange" : "teal"}>
-              {t(`assistant.location.${model.location}`)}
-            </Badge>
-            <Text size="xs" c="dimmed" truncate>
-              {model.name}
-            </Text>
-          </Group>
+      {/* One model for text, another for messages with photos / PDFs. */}
+      <Group justify="space-between" wrap="wrap" gap={6}>
+        {s && (
+          <ModelPicker status={s} isPrivate={privateConv} value={choice} onChange={pickModels} disabled={setModels.isPending} />
         )}
         {!conv && s?.private_available && (
           <Switch
@@ -178,6 +197,7 @@ export function ChatPanel(props: {
             </>
           )}
           {send.isError && <Alert color="red">{(send.error as Error).message}</Alert>}
+          {setModels.isError && <Alert color="red">{(setModels.error as Error).message}</Alert>}
         </Stack>
       </ScrollArea>
 

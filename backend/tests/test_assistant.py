@@ -408,3 +408,95 @@ def test_no_reply_without_a_change_says_so(home, fake):
     fake(Turn(text="", tool_calls=[]))
     _, answer = ask(home["parent"], "?")
     assert answer.text == "(brak odpowiedzi)"
+
+
+# ---- a model for text, another for files ---------------------------------------
+
+
+def _photo():
+    return SimpleUploadedFile("paragon.jpg", b"\xff\xd8\xff", content_type="image/jpeg")
+
+
+def _used(answer) -> str:
+    return LLMCall.objects.filter(message=answer).get().profile_name
+
+
+@pytest.fixture
+def gemini(home):
+    return ProviderProfile.objects.create(
+        name="Gemini", kind="google", model="gemini-3", api_key="k"
+    )
+
+
+def test_text_and_files_go_to_the_models_picked(home, fake, gemini):
+    fake(*[Turn(text="ok", tool_calls=[]) for _ in range(4)])
+    ctx = home["parent"]
+    conv = services.create_conversation(
+        ctx, text_profile_id=home["local"].id, file_profile_id=gemini.id
+    )
+    _, answer = services.send_message(ctx, conv.id, text="ile wydałem?")
+    assert _used(answer) == "Ollama"
+    _, answer = services.send_message(ctx, conv.id, text="dodaj", files=[_photo()])
+    assert _used(answer) == "Gemini"
+
+    # Picked again mid-conversation; a model switched off falls back to the default.
+    services.set_models(ctx, conv.id, text_profile_id=gemini.id, file_profile_id=None)
+    _, answer = services.send_message(ctx, conv.id, text="a teraz?")
+    assert _used(answer) == "Gemini"
+    ProviderProfile.objects.filter(pk=gemini.pk).update(enabled=False)
+    _, answer = services.send_message(ctx, conv.id, text="i jeszcze?")
+    assert _used(answer) == "Claude"
+
+
+def test_files_default_to_the_settings_file_model(home, fake, gemini):
+    fake(*[Turn(text="ok", tool_calls=[]) for _ in range(2)])
+    AISettings.objects.filter(pk=1).update(file_profile=gemini)
+    conv, answer = ask(home["parent"], "co to?", files=[_photo()])
+    assert _used(answer) == "Gemini"
+    _, answer = services.send_message(home["parent"], conv.id, text="dzięki")
+    assert _used(answer) == "Claude"  # text: the chat model
+
+
+def test_model_choice_is_checked(home, gemini, client):
+    ctx = home["parent"]
+    with pytest.raises(ValueError, match="lokalny"):
+        services.create_conversation(ctx, private=True, text_profile_id=gemini.id)
+    blind = ProviderProfile.objects.create(
+        name="Tekstowy", kind="openai", model="x", api_key="k", vision=False
+    )
+    conv = services.create_conversation(ctx)
+    with pytest.raises(ValueError, match="nie czyta"):
+        services.set_models(ctx, conv.id, text_profile_id=None, file_profile_id=blind.id)
+    with pytest.raises(Http404):  # not someone else's conversation
+        services.set_models(home["child"], conv.id, text_profile_id=gemini.id, file_profile_id=None)
+
+    client.force_login(home["parent_user"])
+    resp = client.put(
+        f"/api/assistant/conversations/{conv.id}/models",
+        {"text_profile_id": str(blind.id), "file_profile_id": str(gemini.id)},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert resp.json()["text_profile_id"] == str(blind.id)
+    status = client.get("/api/assistant/status").json()
+    assert {m["name"]: m["vision"] for m in status["models"]} == {
+        "Claude": True,
+        "Gemini": True,
+        "Ollama": True,
+        "Tekstowy": False,
+    }
+    assert status["documents"] == "cloud"
+
+
+def test_settings_save_only_what_is_sent(home, gemini, client):
+    client.force_login(UserFactory(is_superuser=True))
+    resp = client.put(
+        "/api/assistant/settings",
+        {"file_profile_id": str(gemini.id)},
+        content_type="application/json",
+    )
+    body = resp.json()
+    assert body["file_profile_id"] == str(gemini.id)
+    # The other two stay (they used to be cleared by a one-field save).
+    assert body["chat_profile_id"] == str(home["cloud"].id)
+    assert body["local_profile_id"] == str(home["local"].id)

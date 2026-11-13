@@ -171,7 +171,7 @@ export function AISettingsPage() {
           <Title order={4} mb="sm">
             {t("settings.ai.use")}
           </Title>
-          <Group grow align="flex-start">
+          <Group grow align="flex-start" wrap="wrap">
             <Select
               label={t("settings.ai.chatProfile")}
               description={t("settings.ai.chatProfileHint")}
@@ -187,6 +187,15 @@ export function AISettingsPage() {
               data={profiles.filter((p) => p.enabled && p.location === "local").map(option)}
               value={s.local_profile_id}
               onChange={(v) => save.mutate({ local_profile_id: v })}
+            />
+            <Select
+              label={t("settings.ai.fileProfile")}
+              description={t("settings.ai.fileProfileHint")}
+              clearable
+              placeholder={t("settings.ai.fileProfileSame")}
+              data={profiles.filter((p) => p.enabled && p.vision).map(option)}
+              value={s.file_profile_id}
+              onChange={(v) => save.mutate({ file_profile_id: v })}
             />
           </Group>
         </Paper>

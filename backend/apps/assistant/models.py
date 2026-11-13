@@ -73,6 +73,14 @@ class AISettings(models.Model):
         related_name="+",
         help_text="Used for private conversations and local-only modules.",
     )
+    file_profile = models.ForeignKey(
+        ProviderProfile,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text="Default for messages with photos / PDFs (empty: the chat model).",
+    )
     # {"finance": "cloud", "health": "local", ...}; missing → DEFAULT_POLICIES.
     policies = models.JSONField(default=dict, blank=True)
 
@@ -87,6 +95,14 @@ class Conversation(UUIDModel, TimeStamped):
     title = models.CharField(max_length=120, blank=True)
     # Private: everything goes to the local model only.
     private = models.BooleanField(default=False)
+    # Picked in the chat — one model for text, another for messages with
+    # photos / PDFs; empty: the defaults from the AI settings.
+    text_profile = models.ForeignKey(
+        ProviderProfile, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    file_profile = models.ForeignKey(
+        ProviderProfile, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
     # Stable aliases for this conversation: {"[P1]": "Zosia", "[TEL1]": "600 100 200"}.
     aliases = models.JSONField(default=dict, blank=True)
 
