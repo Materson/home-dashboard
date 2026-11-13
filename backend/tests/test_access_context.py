@@ -103,3 +103,17 @@ def test_everyone_grant_wins_regardless_of_order(first):
     for s in subjects:
         AccessGrantFactory(user=user, module="health", level="view", subjects=s)
     assert AccessContext.for_user(user).scopes["health"].persons_for("view") is None
+
+
+def test_deny_takes_its_level_and_everything_above():
+    user = UserFactory()
+    group = GroupFactory()
+    user.groups.add(group)
+    AccessGrantFactory(group=group, module="finance", level="edit")
+    AccessGrantFactory(group=group, module="cars", level="edit")
+    AccessGrantFactory(user=user, module="finance", level="view", effect=AccessGrant.Effect.DENY)
+    AccessGrantFactory(user=user, module="cars", level="edit", effect=AccessGrant.Effect.DENY)
+
+    ctx = AccessContext.for_user(user)
+    assert not ctx.has("finance", "view")  # denied view: nothing left
+    assert ctx.has("cars", "view") and not ctx.has("cars", "edit")  # denied edit: view only

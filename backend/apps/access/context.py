@@ -93,15 +93,22 @@ class AccessContext:
 
     def _merge_grants(self, grants: list[AccessGrant]) -> Scope:
         allows = [g for g in grants if g.effect != AccessGrant.Effect.DENY]
-        deny_levels = {g.level for g in grants if g.effect == AccessGrant.Effect.DENY}
-        effective = {g.level for g in allows} - deny_levels
-        allowed_level = max(effective, key=LEVELS.index) if effective else None
+        # A deny takes away its level and everything above it ("deny view" =
+        # no access, "deny edit" = view only), whatever the allows say.
+        denied_from = min(
+            (LEVELS.index(g.level) for g in grants if g.effect == AccessGrant.Effect.DENY),
+            default=len(LEVELS),
+        )
+        # An allow covers the levels below it too, so: the highest allow, cut
+        # down to just under the lowest deny ("edit" allowed + denied = "view").
+        top = min(max((LEVELS.index(g.level) for g in allows), default=-1), denied_from - 1)
+        allowed_level = LEVELS[top] if top >= 0 else None
 
         persons_by_level: dict[str, set[UUID] | None] = {}
         for level in LEVELS:
             covering = [g for g in allows if level_at_least(g.level, level)]
             sets = [self._grant_person_set(g) for g in covering]
-            if not covering:
+            if not covering or LEVELS.index(level) >= denied_from:
                 persons_by_level[level] = set()
             elif any(p is None for p in sets):  # any "everyone" grant wins, in any order
                 persons_by_level[level] = None
