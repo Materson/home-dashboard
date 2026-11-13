@@ -17,8 +17,6 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 cd backend
 uv sync
 uv run python manage.py migrate
-uv run python manage.py seed_roles
-uv run python manage.py createsuperuser
 uv run python manage.py runserver 0.0.0.0:8000
 
 # second terminal:
@@ -28,14 +26,17 @@ npm run gen:api
 npm run dev
 ```
 
-Open http://localhost:5173.
+Open http://localhost:5173. With no account in the database the app starts
+first-time setup: the first account (main admin), then the family. Everything
+else — accounts, invite / reset links, roles and access exceptions — is in
+Settings; the Django admin (`/admin/`) is only a fallback.
 
 ## Common commands
 
 | Command | Does |
 |---|---|
 | `uv run python manage.py migrate` | apply DB migrations |
-| `uv run python manage.py seed_roles` | re-run the role template seed (idempotent) |
+| `uv run python manage.py seed_roles` | re-run the role template seed (idempotent; first-time setup and the backend container's start run it too) |
 | `uv run pytest` | run the Python test suite |
 | `uv run ruff check . && uv run ruff format .` | lint + format |
 | `uv run celery -A config worker -l info` | run a Celery worker locally |

@@ -1,4 +1,5 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Navigate, Route, Routes, useMatch } from "react-router-dom";
 import { useMe } from "@/features/auth/useMe";
 import { AppShellLayout } from "@/app/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
@@ -20,13 +21,42 @@ import { PeoplePage } from "@/features/people/PeoplePage";
 import { PersonPage } from "@/features/people/PersonPage";
 import { CabinetPage } from "@/features/health/CabinetPage";
 import { Loading } from "@/components/Loading";
+import { AccountPage } from "@/features/settings/AccountPage";
+import { setupApi } from "@/features/settings/api";
+import { FamilyStep } from "@/features/settings/FamilyStep";
+import { InvitePage } from "@/features/settings/InvitePage";
+import { useSettingsHome } from "@/features/settings/parts";
+import { RolesPage } from "@/features/settings/RolesPage";
+import { SetupPage } from "@/features/settings/SetupPage";
+import { UsersPage } from "@/features/settings/UsersPage";
 
 export function App() {
   const me = useMe();
+  // A fresh install (no account yet) opens first-time setup instead of login.
+  const setup = useQuery({
+    queryKey: ["setup"],
+    queryFn: setupApi.status,
+    enabled: me.isSuccess && !me.data,
+    retry: false,
+  });
+  // A one-time link opens on its own, logged in or not.
+  const invite = useMatch("/invite/:token");
 
-  if (me.isLoading) return <Loading />;
-  if (!me.data) {
+  if (invite) {
     return (
+      <Routes>
+        <Route path="/invite/:token" element={<InvitePage />} />
+      </Routes>
+    );
+  }
+  if (me.isLoading || (!me.data && setup.isLoading)) return <Loading />;
+  if (!me.data) {
+    return setup.data?.needs_setup ? (
+      <Routes>
+        <Route path="/setup" element={<SetupPage />} />
+        <Route path="*" element={<Navigate to="/setup" replace />} />
+      </Routes>
+    ) : (
       <Routes>
         <Route path="/auth/login" element={<LoginPage />} />
         <Route path="*" element={<Navigate to="/auth/login" replace />} />
@@ -51,7 +81,14 @@ export function App() {
         <Route path="/household" element={<HouseholdPage />} />
         <Route path="/notes" element={<NotesPage />} />
         <Route path="/assistant" element={<AssistantPage />} />
-        <Route path="/settings" element={<AISettingsPage />} />
+        <Route path="/settings" element={<SettingsHome />} />
+        <Route path="/settings/users" element={<UsersPage />} />
+        <Route path="/settings/roles" element={<RolesPage />} />
+        <Route path="/settings/ai" element={<AISettingsPage />} />
+        <Route path="/settings/account" element={<AccountPage />} />
+        {/* Right after first-time setup: the family step. */}
+        <Route path="/setup" element={<Navigate to="/setup/family" replace />} />
+        <Route path="/setup/family" element={<FamilyStep />} />
         <Route path="/people" element={<PeoplePage />} />
         <Route path="/people/:personId" element={<PersonPage />} />
         <Route path="/auth/*" element={<Navigate to="/" replace />} />
@@ -59,4 +96,10 @@ export function App() {
       </Routes>
     </AppShellLayout>
   );
+}
+
+/** "Settings" opens accounts for an admin, one's own account for others. */
+function SettingsHome() {
+  const home = useSettingsHome();
+  return home ? <Navigate to={home} replace /> : <Loading />;
 }

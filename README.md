@@ -18,8 +18,6 @@ docker compose up -d db redis
 cd backend
 uv sync
 uv run python manage.py migrate
-uv run python manage.py seed_roles
-uv run python manage.py createsuperuser
 uv run python manage.py runserver 0.0.0.0:8000
 # in another terminal
 cd frontend
@@ -27,12 +25,22 @@ npm install
 npm run dev
 ```
 
+Open http://localhost:5173: with no account yet, the app starts first-time
+setup (your admin account, then the family). Accounts, roles and access are
+managed in the app (Settings), no Django admin needed.
+
 ## Full stack (NAS)
 
 ```powershell
 docker compose build
 docker compose up -d
 ```
+
+The backend applies migrations and the default roles every time it starts.
+Open the dashboard: a fresh install shows first-time setup — whoever opens it
+first creates the admin account, so do it right after starting the stack.
+Family members get their logins in Settings → Accounts as one-time links (no
+email needed); a forgotten password is a new link from there too.
 
 Then follow `docs/network-setup.md` to publish `dashboard.<your-domain>` through
 Nginx Proxy Manager with a Let's Encrypt (Cloudflare DNS-01) certificate, and

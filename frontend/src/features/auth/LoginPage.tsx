@@ -85,6 +85,9 @@ export function LoginPage() {
           <Button fullWidth mt="xl" size="md" type="submit" loading={busy}>
             {t("auth.login")}
           </Button>
+          <Text size="xs" c="dimmed" ta="center" mt="md">
+            {t("auth.forgot")}
+          </Text>
         </form>
       </Paper>
     </Box>

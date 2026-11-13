@@ -37,6 +37,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
+import { SettingsNav } from "@/features/settings/parts";
 
 import {
   type AISettings,
@@ -91,7 +92,7 @@ export function AISettingsPage() {
 
   return (
     <Stack gap="lg">
-      <PageHeader title={t("settings.ai.title")} subtitle={t("page.settings.subtitle")} />
+      <PageHeader title={t("settings.ai.title")} subtitle={t("page.settings.subtitle")} actions={<SettingsNav />} />
 
       <Paper withBorder p="md">
         <Group justify="space-between" mb="sm">
